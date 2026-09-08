@@ -190,7 +190,7 @@ const band = p => BANDS.find(b => p < b.max) || BANDS[3];
 const THRESHOLDS = [40,50,60,70];
 
 let state = { city:"QZN", threshold:60, dayIdx:0, days:[], scores:{},
-              conf:{}, anns:[], sys:"", locMsg:"", sources:[] };
+              conf:{}, anns:[], sys:"", locMsg:"", sources:[], stale:[] };
 
 /* ================= weather icons ================= */
 /* chosen from peak hourly + daily total, so the glyph agrees with the number */
@@ -367,6 +367,12 @@ function daySlug(offset){
    article body — not the fetch time — decides which day a suspension applies to. */
 const MONTHS = ["january","february","march","april","may","june","july",
                 "august","september","october","november","december"];
+function articleDate(text){
+  const head = text.slice(0, 1200).toLowerCase();
+  const m = head.match(/(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2}),?\s+(\d{4})/);
+  return m ? (m[1].charAt(0).toUpperCase()+m[1].slice(1)+" "+(+m[2])+", "+m[3]) : null;
+}
+
 function detectDay(text){
   const head = text.slice(0, 1200).toLowerCase();
   const m = head.match(/(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2}),?\s+(\d{4})/);
@@ -380,33 +386,47 @@ function detectDay(text){
    from which recent story links can be pulled. We look at today AND the days
    ahead, because an evening announcement for tomorrow is the whole point. */
 async function roundupDocs(){
-  const docs = [], tried = [];
+  const docs = [], tried = [], stale = [];
+
+  /* A document is only usable if the date printed in the article itself falls
+     inside our five school days. Yesterday's roundup is discarded, never
+     assumed to be today's — that is how a stale Sep 8 list became a Sep 9 WP. */
+  function accept(text, url, name){
+    const idx = detectDay(text);
+    if (idx < 0){
+      const d = articleDate(text);
+      stale.push({name, url, date: d || "undated"});
+      return false;
+    }
+    docs.push({text, url, name, dayIdx: idx});
+    tried.push({name, url, dayIdx: idx});
+    return true;
+  }
 
   for (const off of [0,1,2]){
     const {mon,day,year} = daySlug(off);
     const url = "https://www.rappler.com/philippines/class-suspensions-walang-pasok-"
               + mon + "-" + day + "-" + year + "/";
     const t = await fetchText(url);
-    if (t){ docs.push({text:t, url, name:"Rappler"}); tried.push({name:"Rappler", url}); }
+    if (t) accept(t, url, "Rappler");
   }
 
   const hub = await fetchText("https://www.gmanetwork.com/news/tracking/walang_pasok/");
   if (hub){
     const m = hub.match(/https?:\/\/www\.gmanetwork\.com\/news\/[^\s")\]]*\/story\/?/g) || [];
-    for (const u of [...new Set(m)].slice(0,4)){
+    let taken = 0;
+    for (const u of [...new Set(m)].slice(0,5)){
       const t = await fetchText(u);
       if (t && /class suspension|walang pasok|suspendido/i.test(t)){
-        docs.push({text:t, url:u, name:"GMA News"});
-        tried.push({name:"GMA News", url:u});
-        if (docs.filter(d=>d.name==="GMA News").length >= 2) break;
+        if (accept(t, u, "GMA News")) taken++;
+        if (taken >= 2) break;
       }
     }
   }
   state.sources = tried;
+  state.stale = stale;
   return docs;
 }
-
-const SUSPEND_RE = /suspend|walang pasok|no (face-to-face|in-person)? ?classes|cancel|alternative (learning|delivery)|distance learning|shift to|all levels|face-to-face classes|public and private/i;
 
 /* r.jina.ai returns Markdown, and roundups wrap city names in links to the
    LGU's own Facebook post. Keep the readable text, keep the URL separately. */
@@ -488,19 +508,19 @@ function matchCities(text){
 
 async function loadAnnouncements(){
   const docs = await roundupDocs();
-  if (!docs.length) throw new Error("no source reachable");
+  state.conf = {};
+  state.anns = [];
+  if (!docs.length) throw new Error("no dated source in range");
 
   const byDay = {};
   docs.forEach(d=>{
-    let idx = detectDay(d.text);
-    if (idx < 0) idx = 0;
-    const hits = matchCities(d.text);
-    byDay[idx] = byDay[idx] || {};
-    Object.keys(hits).forEach(id=>{ if(!byDay[idx][id]) byDay[idx][id] = hits[id]; });
+    const hits = matchCities(d.text);           // d.dayIdx is already validated
+    byDay[d.dayIdx] = byDay[d.dayIdx] || {};
+    Object.keys(hits).forEach(id=>{
+      if(!byDay[d.dayIdx][id]) byDay[d.dayIdx][id] = hits[id];
+    });
   });
 
-  state.conf = {};
-  state.anns = [];
   Object.keys(byDay).forEach(idx=>{
     const i = +idx;
     state.conf[i] = {};
@@ -512,6 +532,7 @@ async function loadAnnouncements(){
   });
   state.anns.sort((a,b)=> a.dayIdx - b.dayIdx || a.city.localeCompare(b.city));
 }
+
 const isOff = (cityId, dayIdx) => !!(state.conf[dayIdx] && state.conf[dayIdx][cityId]);
 
 /* ================= rendering ================= */
@@ -622,26 +643,39 @@ function renderAlert(){
 
 function renderAnns(){
   const el = $("anns");
+
+  const covered = [...new Set(state.sources.map(s=>s.dayIdx))].sort()
+    .map(i => state.days[i] ? state.days[i].full : "?");
   const src = state.sources.length
     ? '<div style="font-size:12px;color:var(--mute);margin-top:10px">Read from '
       + [...new Set(state.sources.map(s=>s.name))].join(" and ")
-      + ", covering today and the days already published.</div>"
+      + ". Lists confirmed for: " + covered.join("; ") + ".</div>"
     : "";
+  const skipped = (state.stale && state.stale.length)
+    ? '<div style="font-size:12px;color:var(--mute);margin-top:6px">Ignored '
+      + state.stale.length + " out-of-date "
+      + (state.stale.length===1?"roundup":"roundups")
+      + " (" + [...new Set(state.stale.map(s=>s.date))].join(", ")
+      + ") — older lists are never carried into today.</div>"
+    : "";
+
   if (!state.anns.length){
     el.innerHTML = '<div class="card" style="font-size:14px;color:var(--soft);line-height:1.55">'
       + (state.sources.length
-          ? "No Metro Manila city appears in the published roundups yet. Most are posted between 4:30 and 6:00am, and evening announcements for the next day show up here too."
-          : "Couldn't reach the roundup sources just now. Check GMA or Rappler directly, then refresh.")
-      + '</div>' + src;
+          ? "No Metro Manila city appears in the roundups published for these days yet. Most are posted between 4:30 and 6:00am, and evening announcements for the next day show up here too."
+          : "No current roundup was reachable. Older lists are deliberately ignored, so nothing is shown rather than something stale. Check GMA or Rappler directly, then refresh.")
+      + '</div>' + src + skipped;
     return;
   }
+
   let html = "", lastDay = -1;
   state.anns.forEach(a=>{
     if (a.dayIdx !== lastDay){
       lastDay = a.dayIdx;
       const d = state.days[a.dayIdx];
       html += '<div style="font-size:13px;font-weight:700;color:var(--soft);margin:14px 0 8px">'
-            + (a.dayIdx===0 ? "Today" : "Announced ahead for " + (d?d.full:"a later day")) + '</div>';
+            + (a.dayIdx===0 ? "Today, " + (d?d.full:"") : "Announced ahead for " + (d?d.full:"a later day"))
+            + '</div>';
     }
     html += '<div class="ann"><div style="font-weight:700;font-size:15px">'+esc(a.city)+'</div>'
           + '<div style="font-size:13px;color:#C9B4B4;margin-top:3px">'+esc(a.detail)+'</div>'
@@ -649,7 +683,7 @@ function renderAnns(){
               + '" target="_blank" rel="noopener">Official post</a></div>' : "")
           + '</div>';
   });
-  el.innerHTML = html + src;
+  el.innerHTML = html + src + skipped;
 }
 
 function renderRank(){
