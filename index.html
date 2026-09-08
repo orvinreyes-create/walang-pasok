@@ -426,26 +426,60 @@ function cleanDetail(line){
   return {text, link};
 }
 
+/* Guards against matching a city NAME that is really part of some other
+   proper noun. "Pasig Elementary School" in Candaba, Pampanga is not Pasig City;
+   "Marikina River" is not Marikina City. */
+const INSTITUTION = /^(elementary|high|national|integrated|central|memorial|academy|university|college|school|institute|campus|annex|river|creek|street|st\.|road|avenue|ave\.|blvd|bridge|barangay|brgy|village|subdivision|homes|extension|district|hospital|market|church|parish)\b/i;
+
+/* If a line names a province or town outside Metro Manila, it is not an NCR entry. */
+const OUTSIDE = /\b(pampanga|bulacan|rizal|cavite|laguna|batangas|nueva ecija|tarlac|zambales|bataan|quezon province|candaba|province of|lalawigan|bayan ng|cebu|davao|iloilo|baguio|benguet|pangasinan|la union|albay|bicol|leyte|samar|negros|cagayan|isabela|aurora|marinduque|mindoro|palawan|sorsogon|camarines)\b/i;
+
+function cityRegexes(c){
+  const nm = c.name.normalize("NFD").replace(/[\u0300-\u036f]/g,"");
+  if (c.id === "MNL") return [/\bManila City\b/i, /\bCity of Manila\b/i];
+  if (c.id === "QZN") return [/\bQuezon City\b/i];
+  if (c.id === "PAT") return [new RegExp("\\bPateros\\b","i")];
+  return [ new RegExp("\\b" + nm + "\\s+City\\b","i"),
+           new RegExp("\\bCity of " + nm + "\\b","i") ];
+}
+
 /* A city counts as announced only when its name and suspension wording appear
-   on the same line, and the line is not a dateline. */
+   on the same line, the line is not a dateline, and the name carries genuine
+   city context — either an explicit "City" form, or a bare name that opens the
+   line as a list entry and is not followed by an institution word. */
 function matchCities(text){
-  const lines = text.split(/\r?\n|(?=•)|(?=·)/);
+  const lines = text.split(/\r?\n|(?=\u2022)|(?=\u00b7)/);
   const found = {};
   lines.forEach(raw=>{
     const line = raw.replace(/\s+/g," ").trim();
     if (!line || line.length > 400) return;
     if (/^MANILA,\s*Philippines/i.test(line)) return;
     if (!SUSPEND_RE.test(line)) return;
+    if (OUTSIDE.test(line)) return;
+
     const flat = line.normalize("NFD").replace(/[\u0300-\u036f]/g,"");
+
     CITIES.forEach(c=>{
       if (found[c.id]) return;
       const nm = c.name.normalize("NFD").replace(/[\u0300-\u036f]/g,"");
-      let re;
-      if (c.id === "MNL")      re = new RegExp("(Manila City|City of Manila)","i");
-      else if (c.id === "QZN") re = new RegExp("Quezon City","i");
-      else if (c.id === "PAT") re = new RegExp("\\bPateros\\b","i");
-      else                     re = new RegExp("\\b"+nm+"(\\s+City)?\\b","i");
-      if (!re.test(flat)) return;
+
+      let hit = cityRegexes(c).some(re => re.test(flat));
+
+      /* Fall back to a bare name only when it opens the line, as roundups format
+         list entries — and only when the next word is not an institution. */
+      if (!hit){
+        const lead = new RegExp("^[\\s\u2022\u00b7*_\\-\u2013\u2014\\[]*" + nm + "\\b(.*)$","i");
+        const m = flat.match(lead);
+        if (m && !INSTITUTION.test(m[1].replace(/^[\\)\\]]*/,"").trim())) hit = true;
+      }
+
+      /* Reject an institution reading even when "City" appeared elsewhere. */
+      if (hit){
+        const after = new RegExp("\\b" + nm + "\\s+([A-Za-z.]+)","i").exec(flat);
+        if (after && INSTITUTION.test(after[1]) ) hit = false;
+      }
+      if (!hit) return;
+
       found[c.id] = cleanDetail(line);
     });
   });
