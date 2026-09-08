@@ -1,372 +1,475 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Walang Pasok Watch — Metro Manila</title>
+<meta name="description" content="Class suspension outlook for all 17 Metro Manila cities, today and the next four school days." />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;700&family=Archivo+Narrow:wght@600;700&display=swap" rel="stylesheet">
 <style>
   :root{
     --ground:#141D29; --panel:#1A2432; --line:#253347; --edge:#22303F;
-    --ink:#E6EDF5; --mute:#8296AD; --soft:#AFC1D6; --sel:#43607F;
+    --ink:#E6EDF5; --mute:#8296AD; --soft:#9FB3C8;
+    --calm:#1F6F63; --watch:#B8892B; --likely:#C4611F; --high:#B0302B; --off:#8E1F1B;
   }
   *{box-sizing:border-box}
   body{margin:0;background:var(--ground);color:var(--ink);
        font-family:Archivo,system-ui,-apple-system,sans-serif;-webkit-font-smoothing:antialiased}
-  .wrap{max-width:520px;margin:0 auto;padding:20px 16px 48px}
+  .wrap{max-width:560px;margin:0 auto;padding:20px 16px 56px}
   h1{font-family:'Archivo Narrow',sans-serif;font-weight:700;font-size:30px;margin:0;line-height:1;letter-spacing:-.01em}
-  h2{font-family:'Archivo Narrow',sans-serif;font-weight:700;font-size:19px;margin:26px 0 10px}
-  p.sub{color:var(--mute);font-size:13px;margin:6px 0 0;line-height:1.5}
-  .top{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
-  .pill{background:transparent;color:#9FB3C8;border:1px solid #2E415A;border-radius:999px;
+  h2{font-family:'Archivo Narrow',sans-serif;font-weight:700;font-size:19px;margin:26px 0 8px}
+  p{line-height:1.55}
+  .row{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+  .pill{background:transparent;color:var(--soft);border:1px solid #2E415A;border-radius:999px;
         padding:6px 12px;font:600 12px Archivo,sans-serif;cursor:pointer}
   .pill[aria-pressed="true"]{background:#26364B;color:#fff}
-  .pill:focus-visible,button:focus-visible{outline:2px solid #7FB0E8;outline-offset:2px}
+  .pill:focus-visible,button:focus-visible{outline:2px solid #8FB3DA;outline-offset:2px}
+  .sub{color:var(--mute);font-size:13px;margin:6px 0 0}
   .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
-  .hero{margin-top:14px;border-radius:14px;overflow:hidden;border:1px solid var(--line)}
-  .heroTop{padding:18px 18px 16px}
-  .heroTop .meta{font-size:12px;font-weight:600;opacity:.85}
-  .big{font-family:'Archivo Narrow',sans-serif;font-size:62px;font-weight:700;line-height:.9}
-  .heroSys{background:var(--panel);padding:11px 18px;font-size:13px;color:var(--soft);line-height:1.5}
+  .hero{margin-top:14px;border:1px solid var(--line);border-radius:14px;overflow:hidden}
+  .hero-top{padding:18px}
+  .hero-num{font-family:'Archivo Narrow',sans-serif;font-size:62px;font-weight:700;line-height:.9}
+  .hero-sys{background:var(--panel);padding:11px 18px;font-size:13px;color:#AFC1D6;line-height:1.5}
   .days{display:flex;gap:6px;margin-top:14px}
   .day{flex:1;padding:9px 2px 8px;border-radius:10px;background:var(--panel);
        border:1px solid var(--edge);color:#DDE7F2;cursor:pointer;text-align:center}
-  .day[aria-pressed="true"]{background:#26364B;border-color:var(--sel)}
-  .day .dow{font-size:11px;color:var(--mute)}
-  .day .n{font-family:'Archivo Narrow',sans-serif;font-size:19px;font-weight:700;margin-top:2px}
-  .day .bar{height:3px;border-radius:2px;margin-top:6px;background:#2A3A4D}
+  .day[aria-pressed="true"]{background:#26364B;border-color:#43607F}
+  .day small{display:block;font-size:11px;color:var(--mute)}
+  .day b{font-family:'Archivo Narrow',sans-serif;font-size:19px;display:block;margin-top:2px}
+  .day i{display:block;height:3px;border-radius:2px;margin-top:6px;background:#2A3A4D}
   .map{display:grid;grid-template-columns:repeat(5,1fr);grid-auto-rows:58px;gap:6px}
-  .tile{border:1px solid rgba(255,255,255,.07);border-radius:9px;padding:4px;cursor:pointer;
-        display:flex;flex-direction:column;align-items:center;justify-content:center;background:#1C2838;color:#5E738C}
+  .tile{border-radius:9px;border:1px solid rgba(255,255,255,.07);cursor:pointer;padding:4px;
+        display:flex;flex-direction:column;align-items:center;justify-content:center;
+        background:#1C2838;color:#5E738C;font-family:Archivo,sans-serif}
   .tile[aria-pressed="true"]{border:2px solid #F2F6FB}
-  .tile .code{font-size:10px;font-weight:700;opacity:.9}
-  .tile .n{font-family:'Archivo Narrow',sans-serif;font-size:18px;font-weight:700;line-height:1.1}
-  .legend{display:flex;flex-wrap:wrap;gap:6px 12px;margin-top:14px}
-  .legend span{display:flex;align-items:center;gap:6px;font-size:12px;color:#94A8BE}
-  .sw{width:11px;height:11px;border-radius:3px}
+  .tile span{font-size:10px;font-weight:700;opacity:.9}
+  .tile b{font-family:'Archivo Narrow',sans-serif;font-size:18px;line-height:1.1}
+  .legend{display:flex;flex-wrap:wrap;gap:6px 12px;margin-top:14px;font-size:12px;color:#94A8BE}
+  .legend span{display:flex;align-items:center;gap:6px}
+  .sw{width:11px;height:11px;border-radius:3px;display:inline-block}
   .alert{width:100%;text-align:left;cursor:pointer;margin-top:14px;background:#2A2015;
          border:1px solid #6B5220;border-left:3px solid #E0A32E;border-radius:0 12px 12px 0;
-         padding:13px 15px;color:#F3E4C4;font-family:inherit}
-  .rank button{display:flex;align-items:center;gap:10px;width:100%;cursor:pointer;background:transparent;
-       border:none;border-radius:8px;padding:8px 10px;color:#DDE7F2;text-align:left;font:inherit}
-  .rank button[aria-pressed="true"]{background:var(--edge)}
-  .track{flex:2;height:6px;border-radius:3px;background:var(--edge);overflow:hidden}
-  .fill{display:block;height:100%}
-  .thr{display:flex;gap:6px}
-  .thr button{flex:1;padding:10px 0;border-radius:9px;border:none;cursor:pointer;
-       font:700 15px Archivo,sans-serif;background:var(--edge);color:#9FB3C8}
-  .thr button[aria-pressed="true"]{background:var(--sel);color:#fff}
-  .lgu{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
-  .lgu a{font-size:12px;color:#9FB3C8;border:1px solid #2E415A;border-radius:999px;
-         padding:5px 10px;text-decoration:none}
-  .lgu a:hover{color:#fff;border-color:#4E6B8C}
-  .fine{color:#71859B;font-size:12px;line-height:1.6;margin-top:28px}
-  .hidden{display:none}
+         padding:13px 15px;color:#F3E4C4;font-family:Archivo,sans-serif}
+  .ann{background:#241A1C;border-left:3px solid var(--high);border-radius:0 10px 10px 0;padding:12px 14px;margin-bottom:8px}
+  .ann a{color:#E8A9A5}
+  .rank{display:flex;align-items:center;gap:10px;width:100%;background:transparent;border:0;
+        border-radius:8px;padding:8px 10px;color:#DDE7F2;cursor:pointer;text-align:left;font:inherit}
+  .rank[aria-pressed="true"]{background:#22303F}
+  .bar{flex:2;height:6px;border-radius:3px;background:#22303F;overflow:hidden}
+  .bar i{display:block;height:100%}
+  .foot{color:#71859B;font-size:12px;line-height:1.6;margin-top:28px}
+  .thr{display:flex;gap:6px;margin-top:8px}
+  .thr button{flex:1;padding:10px 0;border-radius:9px;border:0;background:var(--edge);
+              color:var(--soft);font:700 15px Archivo,sans-serif;cursor:pointer}
+  .thr button[aria-pressed="true"]{background:#43607F;color:#fff}
+  @media (prefers-reduced-motion:no-preference){.tile,.day{transition:border-color .15s}}
 </style>
 </head>
 <body>
 <div class="wrap">
 
-  <div class="top">
+  <div class="row">
     <h1>Walang Pasok Watch</h1>
     <div style="display:flex;gap:6px;flex-shrink:0">
-      <button class="pill" id="setBtn" aria-pressed="false">Settings</button>
-      <button class="pill" id="refreshBtn">Refresh</button>
+      <button class="pill" id="btnSet" aria-pressed="false">Settings</button>
+      <button class="pill" id="btnRef">Refresh</button>
     </div>
   </div>
-  <p class="sub" id="statusLine">Loading rainfall forecast…</p>
+  <p class="sub" id="subline">Loading your settings…</p>
 
-  <div class="card hidden" id="settings" style="margin-top:14px">
-    <div style="font-size:14px;font-weight:700;margin-bottom:8px">Tell me when risk reaches</div>
-    <div class="thr" id="thrRow"></div>
-    <div style="font-size:13px;color:var(--mute);margin-top:10px;line-height:1.5">
-      Your home city is whichever tile you tap on the map. Both settings are remembered on this device.
-    </div>
+  <div class="card" id="settings" hidden style="margin-top:14px">
+    <div style="font-size:14px;font-weight:700">Tell me when risk reaches</div>
+    <div class="thr" id="thr"></div>
+    <p style="font-size:13px;color:var(--mute);margin:10px 0 0">
+      Your home city is whichever tile you tap on the map. Both settings are saved on this device.
+    </p>
   </div>
 
-  <button class="alert hidden" id="alertBox"></button>
+  <button class="alert" id="alert" hidden></button>
 
   <div class="hero">
-    <div class="heroTop" id="heroTop">
-      <div class="meta" id="heroMeta">—</div>
-      <div style="font-family:'Archivo Narrow',sans-serif;font-size:26px;font-weight:700;margin-top:8px" id="heroBody">Reading the forecast…</div>
+    <div class="hero-top" id="heroTop" style="background:#1C2838">
+      <div style="font-size:12px;font-weight:600;opacity:.85" id="heroWho">—</div>
+      <div id="heroBody" style="font-size:15px;margin-top:10px;line-height:1.5">Reading the rainfall forecast…</div>
     </div>
-    <div class="heroSys hidden" id="heroSys"></div>
+    <div class="hero-sys" id="heroSys" hidden></div>
   </div>
 
-  <div class="days" id="dayStrip"></div>
+  <div class="days" id="days"></div>
 
-  <h2 style="margin-bottom:4px">The 17 cities</h2>
-  <p class="sub" style="margin:0 0 12px">Laid out roughly as they sit on the map — Navotas and Malabon up north, Muntinlupa at the bottom. Tap one to set it as home.</p>
+  <h2>The 17 cities</h2>
+  <p style="color:var(--mute);font-size:13px;margin:0 0 12px">
+    Laid out roughly as they sit on the map — Navotas and Malabon up north, Muntinlupa at the bottom.
+    Tap one to set it as home.
+  </p>
   <div class="map" id="map"></div>
   <div class="legend" id="legend"></div>
 
-  <h2>Confirm before you decide</h2>
-  <div class="card" style="font-size:14px;color:#9FB3C8;line-height:1.55">
-    Suspensions are posted by each city, usually between 4:30 and 6:00am. This page reads rainfall,
-    not announcements — check your city's page to confirm.
-    <div class="lgu" id="lguLinks"></div>
-  </div>
+  <h2>Announced so far</h2>
+  <div id="anns"><div class="card" style="font-size:14px;color:var(--soft)">Checking city and news feeds…</div></div>
 
   <h2>Highest risk first</h2>
-  <div class="rank" id="rank"></div>
+  <div id="rank"></div>
 
-  <p class="fine">
-    Percentages are an estimate computed from Open-Meteo rainfall forecasts and each city's flood
-    exposure. They are not an official forecast. Only your city government, DepEd, or Malacañang can
-    suspend classes.
+  <h2>How the number is worked out</h2>
+  <div class="card" style="font-size:13px;color:#BACADB;line-height:1.6">
+    Rainfall comes from Open-Meteo's hourly forecast for each city. The score follows PAGASA's warning
+    thresholds — 7.5&ndash;15&nbsp;mm in an hour is yellow, 15&ndash;30 orange, above 30 red — then adds weight
+    for the 24-hour total, since sustained rain is what floods a catchment. Each city carries a flood-exposure
+    factor drawn from its history: Marikina, Malabon and Navotas flood well before Makati or Muntinlupa on
+    the same rainfall. Once a city posts a real announcement, the estimate is replaced by it.
+  </div>
+
+  <p class="foot">
+    Percentages are an estimate from the rainfall outlook, not an official forecast. Only your city
+    government, DepEd, or Malaca&ntilde;ang can suspend classes. Announcements below are pulled from live
+    news feeds and can lag a fresh post by a few minutes — confirm on your LGU's official page before
+    changing your plans.
   </p>
 </div>
 
 <script>
-/* ---------- cities: position on the schematic map, coords, flood exposure ---------- */
+/* ------------------------------------------------------------------
+   Walang Pasok Watch — static build, no API keys, no backend.
+   Weather:      Open-Meteo (free, keyless, CORS-enabled)
+   Announcements: Google News RSS via a public CORS proxy
+------------------------------------------------------------------- */
+
 const CITIES = [
-  {id:"NAV",name:"Navotas",      col:1,row:1,lat:14.6667,lon:120.9417,f:1.30,fb:"navotascitygov"},
-  {id:"MAL",name:"Malabon",      col:2,row:1,lat:14.6681,lon:120.9567,f:1.32,fb:"malaboncitygov"},
-  {id:"VAL",name:"Valenzuela",   col:3,row:1,lat:14.7011,lon:120.9830,f:1.28,fb:"valenzuelacitygov"},
-  {id:"CAL",name:"Caloocan",     col:2,row:2,lat:14.6507,lon:120.9676,f:1.15,fb:"CaloocanCityGov"},
-  {id:"QZN",name:"Quezon City",  col:4,row:2,lat:14.6760,lon:121.0437,f:1.05,fb:"QCGov"},
-  {id:"MNL",name:"Manila",       col:1,row:3,lat:14.5995,lon:120.9842,f:1.20,fb:"manilapio"},
-  {id:"SJN",name:"San Juan",     col:3,row:3,lat:14.6019,lon:121.0355,f:1.05,fb:"sanjuancitygov"},
-  {id:"MRK",name:"Marikina",     col:5,row:3,lat:14.6507,lon:121.1029,f:1.35,fb:"MarikinaPIO"},
-  {id:"MND",name:"Mandaluyong",  col:3,row:4,lat:14.5794,lon:121.0359,f:1.05,fb:"mandaluyongcity"},
-  {id:"PSG",name:"Pasig",        col:4,row:4,lat:14.5764,lon:121.0851,f:1.22,fb:"pasigcitygov"},
-  {id:"PSY",name:"Pasay",        col:2,row:5,lat:14.5378,lon:120.9896,f:1.10,fb:"PasayCityGov"},
-  {id:"MAK",name:"Makati",       col:3,row:5,lat:14.5547,lon:121.0244,f:0.85,fb:"MakatiCityGov"},
-  {id:"TAG",name:"Taguig",       col:4,row:5,lat:14.5176,lon:121.0509,f:0.95,fb:"taguigcitygov"},
-  {id:"PAT",name:"Pateros",      col:5,row:5,lat:14.5455,lon:121.0685,f:1.25,fb:"pateros.gov"},
-  {id:"LSP",name:"Las Piñas",    col:1,row:6,lat:14.4499,lon:120.9832,f:1.05,fb:"laspinascitygov"},
-  {id:"PAR",name:"Parañaque",    col:2,row:6,lat:14.4793,lon:121.0198,f:1.10,fb:"paranaquecitygov"},
-  {id:"MUN",name:"Muntinlupa",   col:2,row:7,lat:14.4081,lon:121.0415,f:0.85,fb:"MuntinlupaCityGov"},
+  {id:"NAV",name:"Navotas",     lat:14.6667,lon:120.9417,col:1,row:1,v:1.30},
+  {id:"MAL",name:"Malabon",     lat:14.6681,lon:120.9567,col:2,row:1,v:1.35},
+  {id:"VAL",name:"Valenzuela",  lat:14.7000,lon:120.9830,col:3,row:1,v:1.25},
+  {id:"CAL",name:"Caloocan",    lat:14.6507,lon:120.9676,col:2,row:2,v:1.10},
+  {id:"QZN",name:"Quezon City", lat:14.6760,lon:121.0437,col:4,row:2,v:1.05},
+  {id:"MNL",name:"Manila",      lat:14.5995,lon:120.9842,col:1,row:3,v:1.15},
+  {id:"SJN",name:"San Juan",    lat:14.6019,lon:121.0355,col:3,row:3,v:1.05},
+  {id:"MRK",name:"Marikina",    lat:14.6507,lon:121.1029,col:5,row:3,v:1.35},
+  {id:"MND",name:"Mandaluyong", lat:14.5794,lon:121.0359,col:3,row:4,v:1.00},
+  {id:"PSG",name:"Pasig",       lat:14.5764,lon:121.0851,col:4,row:4,v:1.20},
+  {id:"PSY",name:"Pasay",       lat:14.5378,lon:121.0014,col:2,row:5,v:1.05},
+  {id:"MAK",name:"Makati",      lat:14.5547,lon:121.0244,col:3,row:5,v:0.90},
+  {id:"TAG",name:"Taguig",      lat:14.5176,lon:121.0509,col:4,row:5,v:1.05},
+  {id:"PAT",name:"Pateros",     lat:14.5455,lon:121.0668,col:5,row:5,v:1.15},
+  {id:"LSP",name:"Las Piñas",   lat:14.4453,lon:120.9842,col:1,row:6,v:1.00},
+  {id:"PAR",name:"Parañaque",   lat:14.4793,lon:121.0198,col:2,row:6,v:1.05},
+  {id:"MUN",name:"Muntinlupa",  lat:14.3832,lon:121.0409,col:2,row:7,v:0.90}
 ];
 
 const BANDS = [
-  {max:16, label:"Classes likely on",            bg:"#1F6F63", fg:"#DFF3EE", range:"0–15"},
-  {max:41, label:"Watch the 4:30am bulletin",    bg:"#B8892B", fg:"#FFF6E2", range:"16–40"},
-  {max:71, label:"Suspension likely",            bg:"#C4611F", fg:"#FFF0E3", range:"41–70"},
-  {max:101,label:"Suspension very likely",       bg:"#B0302B", fg:"#FFE9E7", range:"71–100"},
+  {max:16, label:"Classes likely on",           bg:"var(--calm)",  fg:"#DFF3EE"},
+  {max:41, label:"Watch the 4:30am bulletin",   bg:"var(--watch)", fg:"#FFF6E2"},
+  {max:71, label:"Suspension likely",           bg:"var(--likely)",fg:"#FFF0E3"},
+  {max:101,label:"Suspension very likely",      bg:"var(--high)",  fg:"#FFE9E7"}
 ];
 const band = p => BANDS.find(b => p < b.max) || BANDS[3];
 const THRESHOLDS = [40,50,60,70];
 
-/* ---------- state ---------- */
-let home = "QZN", threshold = 60, dayIdx = 0, model = null;
+let state = { city:"QZN", threshold:60, dayIdx:0, days:[], scores:{}, conf:{}, anns:[], sys:"" };
 
-try {
-  const s = JSON.parse(localStorage.getItem("wpw:settings") || "{}");
-  if (CITIES.some(c => c.id === s.city)) home = s.city;
-  if (THRESHOLDS.includes(s.threshold)) threshold = s.threshold;
-} catch(e){}
-const save = () => { try{ localStorage.setItem("wpw:settings",
-  JSON.stringify({city:home, threshold})); }catch(e){} };
-
-/* ---------- rainfall -> suspension probability ----------
-   PAGASA rainfall warnings key off intensity: ~7.5mm/h yellow,
-   15mm/h orange, 30mm/h red. Daily totals matter for flooding.
-   Score blends peak hourly intensity, the wettest 6-hour window,
-   and the daily total, then scales by the city's flood exposure. */
-function scoreDay(hours, dailyTotal, floodFactor){
-  const peak = Math.max(0, ...hours);
-  let win6 = 0;
-  for (let i = 0; i + 6 <= hours.length; i++){
-    let s = 0; for (let j = i; j < i + 6; j++) s += hours[j];
-    if (s > win6) win6 = s;
-  }
-  // morning matters most: classes are called by ~5am on the day
-  const morning = hours.slice(0, 10).reduce((a,b)=>a+b,0);
-
-  const fromPeak  = peak >= 30 ? 78 : peak >= 15 ? 55 : peak >= 7.5 ? 30 : peak >= 3 ? 12 : 2;
-  const fromWin   = win6 >= 100 ? 75 : win6 >= 60 ? 52 : win6 >= 30 ? 28 : win6 >= 15 ? 12 : 2;
-  const fromTotal = dailyTotal >= 150 ? 70 : dailyTotal >= 90 ? 48 : dailyTotal >= 50 ? 28 :
-                    dailyTotal >= 25 ? 12 : 2;
-  const fromAM    = morning >= 40 ? 22 : morning >= 20 ? 12 : morning >= 8 ? 5 : 0;
-
-  let p = Math.max(fromPeak, fromWin, fromTotal) + fromAM;
-  p = p * floodFactor;
-  return Math.max(0, Math.min(99, Math.round(p)));
+/* ---------- settings persistence ---------- */
+function loadSettings(){
+  try{
+    const s = JSON.parse(localStorage.getItem("wpw:settings") || "{}");
+    if (CITIES.some(c => c.id === s.city)) state.city = s.city;
+    if (THRESHOLDS.includes(s.threshold)) state.threshold = s.threshold;
+  }catch(e){}
+}
+function saveSettings(){
+  try{
+    localStorage.setItem("wpw:settings",
+      JSON.stringify({city:state.city, threshold:state.threshold}));
+  }catch(e){}
 }
 
-function systemLine(model){
-  const worst = Math.max(...model.cities.map(c => c.p[0]));
-  const rainToday = Math.max(...model.cities.map(c => c.rain[0]));
-  if (worst >= 70) return "Heavy rainfall in the forecast across parts of the metro today.";
-  if (worst >= 40) return "Rain bands strong enough for localised flooding in low-lying areas.";
-  if (rainToday >= 10) return "Scattered rain, nothing near suspension levels.";
-  return "No significant rainfall in the forecast.";
+/* ---------- dates: today + next 4 weekdays, Manila time ---------- */
+function manilaNow(){
+  return new Date(new Date().toLocaleString("en-US",{timeZone:"Asia/Manila"}));
 }
-
-/* ---------- fetch ---------- */
-async function load(){
-  const status = document.getElementById("statusLine");
-  document.getElementById("refreshBtn").textContent = "Reading…";
-  const lat = CITIES.map(c=>c.lat).join(",");
-  const lon = CITIES.map(c=>c.lon).join(",");
-  const url = "https://api.open-meteo.com/v1/forecast?latitude="+lat+"&longitude="+lon+
-    "&hourly=precipitation&daily=precipitation_sum&timezone=Asia%2FManila&forecast_days=10";
-  try {
-    const res = await fetch(url);
-    if (!res.ok) throw new Error("http "+res.status);
-    let sets = await res.json();
-    if (!Array.isArray(sets)) sets = [sets];
-
-    // today plus the next four weekdays
-    const allDates = sets[0].daily.time;
-    const keep = [];
-    for (let i = 0; i < allDates.length && keep.length < 5; i++){
-      const d = new Date(allDates[i] + "T00:00:00+08:00");
-      const dow = d.getDay();
-      if (dow !== 0 && dow !== 6) keep.push({i, date: allDates[i], d});
-    }
-
-    const cities = CITIES.map((c, ci) => {
-      const set = sets[ci] || sets[0];
-      const p = [], rain = [];
-      keep.forEach(k => {
-        const hrs = set.hourly.precipitation.slice(k.i*24, k.i*24 + 24).map(v => v || 0);
-        const tot = set.daily.precipitation_sum[k.i] || 0;
-        p.push(scoreDay(hrs, tot, c.f));
-        rain.push(Math.round(tot));
+function schoolDays(){
+  const out = [], d = manilaNow();
+  d.setHours(0,0,0,0);
+  while (out.length < 5){
+    const wd = d.getDay();
+    if (wd !== 0 && wd !== 6){
+      out.push({
+        key: d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"),
+        label: d.toLocaleDateString("en-PH",{weekday:"short"}),
+        full: d.toLocaleDateString("en-PH",{weekday:"long",month:"short",day:"numeric"})
       });
-      return {...c, p, rain};
-    });
-
-    model = {
-      days: keep.map(k => k.d.toLocaleDateString("en-PH",{weekday:"short",month:"short",day:"numeric"})),
-      cities
-    };
-    dayIdx = 0;
-    status.textContent = "";
-    render();
-  } catch(e){
-    status.textContent = "Could not reach the weather service. Check your connection and tap Refresh.";
-    document.getElementById("heroBody").textContent = "No reading yet.";
-  } finally {
-    document.getElementById("refreshBtn").textContent = "Refresh";
+    }
+    d.setDate(d.getDate()+1);
   }
+  return out;
 }
 
-/* ---------- render ---------- */
-const cityById = id => model && model.cities.find(c => c.id === id);
+/* ---------- scoring ---------- */
+function peakScore(mm){
+  if (mm >= 30) return 88;   // PAGASA red
+  if (mm >= 15) return 66;   // orange
+  if (mm >= 7.5) return 40;  // yellow
+  if (mm >= 2.5) return 14;
+  return 4;
+}
+function totalScore(mm){
+  if (mm >= 100) return 26;
+  if (mm >= 60)  return 18;
+  if (mm >= 30)  return 11;
+  if (mm >= 10)  return 5;
+  return 0;
+}
+function score(peak, total, vuln){
+  return Math.max(1, Math.min(97, Math.round((peakScore(peak) + totalScore(total)) * vuln)));
+}
+
+/* ---------- weather ---------- */
+async function loadWeather(){
+  const lats = CITIES.map(c=>c.lat).join(",");
+  const lons = CITIES.map(c=>c.lon).join(",");
+  const url = "https://api.open-meteo.com/v1/forecast"
+    + "?latitude=" + lats + "&longitude=" + lons
+    + "&hourly=precipitation&daily=precipitation_sum"
+    + "&timezone=Asia%2FManila&forecast_days=8";
+  const res = await fetch(url);
+  if (!res.ok) throw new Error("weather");
+  let sets = await res.json();
+  if (!Array.isArray(sets)) sets = [sets];
+
+  const days = state.days;
+  let wettest = 0, wettestCity = "";
+
+  CITIES.forEach((c,i)=>{
+    const s = sets[i]; if (!s) return;
+    const hTimes = s.hourly.time, hRain = s.hourly.precipitation;
+    const dTimes = s.daily.time,  dRain = s.daily.precipitation_sum;
+    state.scores[c.id] = days.map(d=>{
+      let peak = 0;
+      for (let k=0;k<hTimes.length;k++){
+        if (hTimes[k].slice(0,10) === d.key) peak = Math.max(peak, hRain[k] || 0);
+      }
+      const di = dTimes.indexOf(d.key);
+      const total = di >= 0 ? (dRain[di] || 0) : 0;
+      return {p: score(peak,total,c.v), peak: +peak.toFixed(1), total: Math.round(total)};
+    });
+    const t0 = state.scores[c.id][0].total;
+    if (t0 > wettest){ wettest = t0; wettestCity = c.name; }
+  });
+
+  state.sys = wettest >= 10
+    ? "Heaviest rain today is over " + wettestCity + ", about " + wettest + " mm expected."
+    : "No significant rainfall in the Metro Manila forecast today.";
+}
+
+/* ---------- live announcements ---------- */
+const PROXIES = [
+  u => "https://api.allorigins.win/raw?url=" + encodeURIComponent(u),
+  u => "https://corsproxy.io/?" + encodeURIComponent(u),
+  u => "https://r.jina.ai/" + u
+];
+const FEED = "https://news.google.com/rss/search?q="
+  + encodeURIComponent('("class suspension" OR "walang pasok" OR "suspension of classes") Metro Manila when:1d')
+  + "&hl=en-PH&gl=PH&ceid=PH:en";
+
+async function loadAnnouncements(){
+  let xml = null;
+  for (const p of PROXIES){
+    try{
+      const r = await fetch(p(FEED));
+      if (!r.ok) continue;
+      const t = await r.text();
+      if (t.indexOf("<item") === -1) continue;
+      xml = t; break;
+    }catch(e){}
+  }
+  if (!xml) throw new Error("feed");
+
+  const doc = new DOMParser().parseFromString(xml, "text/xml");
+  const items = [...doc.querySelectorAll("item")].slice(0,40);
+  const cutoff = Date.now() - 26*3600*1000;
+  const seen = new Set(), out = [];
+
+  items.forEach(it=>{
+    const title = (it.querySelector("title")||{}).textContent || "";
+    const link  = (it.querySelector("link") ||{}).textContent || "";
+    const src   = (it.querySelector("source")||{}).textContent || "News";
+    const pub   = Date.parse((it.querySelector("pubDate")||{}).textContent || "");
+    if (pub && pub < cutoff) return;
+    const low = title.toLowerCase();
+    const suspending = /suspend|walang pasok|no classes|cancel/.test(low);
+    if (!suspending) return;
+    CITIES.forEach(c=>{
+      const nm = c.name.toLowerCase().replace("ñ","n");
+      if (low.replace("ñ","n").indexOf(nm) === -1) return;
+      if (seen.has(c.id)) return;
+      seen.add(c.id);
+      state.conf[c.id] = true;
+      out.push({city:c.name, title, link, src, when:pub ? new Date(pub) : null});
+    });
+  });
+  state.anns = out;
+}
+
+/* ---------- rendering ---------- */
+const $ = id => document.getElementById(id);
+const cityById = id => CITIES.find(c=>c.id===id);
+const val = (id,i) => (state.scores[id] && state.scores[id][i]) ? state.scores[id][i].p : null;
 
 function render(){
-  const hc = cityById(home) || CITIES.find(c=>c.id===home);
-  const now = new Date().toLocaleTimeString("en-PH",{hour:"numeric",minute:"2-digit",timeZone:"Asia/Manila"});
-  document.getElementById("statusLine").textContent =
-    "Home city: " + hc.name + ". Alerting at " + threshold + "% and above." +
-    (model ? " Last read " + now + "." : "");
+  const c = cityById(state.city);
+  $("subline").textContent = "Home city: " + c.name + ". Alerting at "
+    + state.threshold + "% and above." + (state.days[0] ? " Showing " + state.days[0].full + " onward." : "");
 
-  if (!model) return;
-  const p = hc.p[dayIdx], b = band(p);
+  renderHero(); renderDays(); renderMap(); renderAlert(); renderAnns(); renderRank();
+}
 
-  const top = document.getElementById("heroTop");
-  top.style.background = b.bg; top.style.color = b.fg;
-  document.getElementById("heroMeta").textContent = hc.name + " · " + model.days[dayIdx];
-  document.getElementById("heroBody").innerHTML =
-    '<div style="display:flex;align-items:flex-end;gap:10px;margin-top:6px">' +
-      '<span class="big">'+p+'</span><span style="font-size:22px;font-weight:600;padding-bottom:6px">%</span></div>' +
-    '<div style="font-size:15px;font-weight:600;margin-top:8px">'+b.label+'</div>' +
-    '<div style="font-size:13px;font-weight:400;margin-top:6px;opacity:.9">'+hc.rain[dayIdx]+'mm of rain forecast</div>';
-  const sys = document.getElementById("heroSys");
-  sys.textContent = systemLine(model); sys.classList.remove("hidden");
+function renderHero(){
+  const c = cityById(state.city);
+  const i = state.dayIdx;
+  const off = i === 0 && state.conf[c.id];
+  const p = val(c.id, i);
+  const s = state.scores[c.id] && state.scores[c.id][i];
+  $("heroWho").textContent = c.name + " · " + (state.days[i] ? state.days[i].full : "—");
+  const top = $("heroTop");
+  if (p == null){
+    top.style.background = "#1C2838"; top.style.color = "#fff";
+    $("heroBody").innerHTML = "No reading yet. Tap Refresh to pull the forecast.";
+    return;
+  }
+  const b = band(p);
+  top.style.background = off ? "var(--off)" : b.bg;
+  top.style.color = off ? "#fff" : b.fg;
+  $("heroBody").innerHTML =
+    '<div style="display:flex;align-items:flex-end;gap:10px;margin-top:6px">'
+    + '<span class="hero-num">' + (off ? "OFF" : p) + '</span>'
+    + (off ? "" : '<span style="font-size:22px;font-weight:600;padding-bottom:6px">%</span>')
+    + '</div><div style="font-size:15px;font-weight:600;margin-top:8px">'
+    + (off ? "Suspension announced — verify with your school" : b.label) + '</div>'
+    + '<div style="font-size:13px;margin-top:6px;opacity:.9">'
+    + s.total + ' mm expected, peaking near ' + s.peak + ' mm in an hour.</div>';
+  $("heroSys").hidden = !state.sys;
+  $("heroSys").textContent = state.sys;
+}
 
-  // day strip
-  const strip = document.getElementById("dayStrip");
-  strip.innerHTML = "";
-  model.days.forEach((d, i) => {
-    const v = hc.p[i];
-    const el = document.createElement("button");
-    el.className = "day"; el.setAttribute("aria-pressed", i === dayIdx);
-    el.innerHTML = '<div class="dow">'+d.split(" ")[0].replace(",","")+'</div>'+
-                   '<div class="n">'+v+'</div>'+
-                   '<div class="bar" style="background:'+band(v).bg+'"></div>';
-    el.onclick = () => { dayIdx = i; render(); };
-    strip.appendChild(el);
-  });
-
-  // alert
-  const box = document.getElementById("alertBox");
-  let hit = null;
-  for (let i = 1; i < hc.p.length; i++) if (hc.p[i] >= threshold) { hit = i; break; }
-  if (hit !== null){
-    box.classList.remove("hidden");
-    box.innerHTML = '<div style="font-size:14px;font-weight:700">Heads up for '+model.days[hit]+'</div>'+
-      '<div style="font-size:13px;margin-top:4px;line-height:1.5;color:#D7C39A">'+hc.name+
-      ' is at '+hc.p[hit]+'%. Worth lining up childcare and work-from-home the night before.</div>';
-    box.onclick = () => { dayIdx = hit; render(); };
-  } else box.classList.add("hidden");
-
-  // map
-  const map = document.getElementById("map");
-  map.innerHTML = "";
-  model.cities.forEach(c => {
-    const v = c.p[dayIdx], cb = band(v);
-    const el = document.createElement("button");
-    el.className = "tile"; el.title = c.name;
-    el.setAttribute("aria-pressed", c.id === home);
-    el.setAttribute("aria-label", c.name + ", " + v + " percent");
-    el.style.gridColumn = c.col; el.style.gridRow = c.row;
-    el.style.background = cb.bg; el.style.color = cb.fg;
-    el.innerHTML = '<span class="code">'+c.id+'</span><span class="n">'+v+'</span>';
-    el.onclick = () => { home = c.id; save(); render(); };
-    map.appendChild(el);
-  });
-
-  // ranked
-  const rank = document.getElementById("rank");
-  rank.innerHTML = "";
-  [...model.cities].sort((a,b2)=>b2.p[dayIdx]-a.p[dayIdx]).forEach(c => {
-    const v = c.p[dayIdx];
-    const el = document.createElement("button");
-    el.setAttribute("aria-pressed", c.id === home);
-    el.innerHTML = '<span style="flex:1;font-size:14px">'+c.name+'</span>'+
-      '<span class="track"><span class="fill" style="width:'+v+'%;background:'+band(v).bg+'"></span></span>'+
-      '<span style="width:30px;text-align:right;font-family:\'Archivo Narrow\',sans-serif;font-weight:700;font-size:16px">'+v+'</span>';
-    el.onclick = () => { home = c.id; save(); render(); };
-    rank.appendChild(el);
+function renderDays(){
+  const el = $("days"); el.innerHTML = "";
+  state.days.forEach((d,i)=>{
+    const p = val(state.city, i);
+    const b = document.createElement("button");
+    b.className = "day"; b.setAttribute("aria-pressed", i === state.dayIdx);
+    b.innerHTML = "<small>"+d.label+"</small><b>"+(p==null?"–":p)+"</b>"
+      + '<i style="background:'+(p==null?"#2A3A4D":band(p).bg)+'"></i>';
+    b.onclick = ()=>{ state.dayIdx = i; render(); };
+    el.appendChild(b);
   });
 }
 
-/* ---------- static chrome ---------- */
-const legend = document.getElementById("legend");
-BANDS.forEach(b => {
-  const s = document.createElement("span");
-  s.innerHTML = '<span class="sw" style="background:'+b.bg+'"></span>'+b.range;
-  legend.appendChild(s);
-});
+function renderMap(){
+  const el = $("map"); el.innerHTML = "";
+  CITIES.forEach(c=>{
+    const p = val(c.id, state.dayIdx);
+    const off = state.dayIdx === 0 && state.conf[c.id];
+    const b = p == null ? null : band(p);
+    const t = document.createElement("button");
+    t.className = "tile"; t.title = c.name;
+    t.setAttribute("aria-pressed", c.id === state.city);
+    t.setAttribute("aria-label", c.name + (p==null?"":", "+p+" percent"));
+    t.style.gridColumn = c.col; t.style.gridRow = c.row;
+    if (off){ t.style.background = "var(--off)"; t.style.color = "#fff"; }
+    else if (b){ t.style.background = b.bg; t.style.color = b.fg; }
+    t.innerHTML = "<span>"+c.id+"</span><b>"+(off?"OFF":(p==null?"–":p))+"</b>";
+    t.onclick = ()=>{ state.city = c.id; saveSettings(); render(); };
+    el.appendChild(t);
+  });
+  $("legend").innerHTML = BANDS.map((b,i)=>
+    '<span><i class="sw" style="background:'+b.bg+'"></i>'
+    + (i===0?"0–15":i===1?"16–40":i===2?"41–70":"71–100") + '</span>').join("")
+    + '<span><i class="sw" style="background:var(--off)"></i>Already announced</span>';
+}
 
-const thrRow = document.getElementById("thrRow");
-THRESHOLDS.forEach(t => {
-  const b = document.createElement("button");
-  b.textContent = t + "%";
-  b.setAttribute("aria-pressed", t === threshold);
-  b.onclick = () => {
-    threshold = t; save();
-    [...thrRow.children].forEach(x => x.setAttribute("aria-pressed", x.textContent === t+"%"));
-    render();
-  };
-  thrRow.appendChild(b);
-});
+function renderAlert(){
+  const el = $("alert");
+  for (let i=1;i<state.days.length;i++){
+    const p = val(state.city, i);
+    if (p != null && p >= state.threshold){
+      el.hidden = false;
+      el.innerHTML = '<div style="font-size:14px;font-weight:700">Heads up for '
+        + state.days[i].full + '</div><div style="font-size:13px;margin-top:4px;color:#D7C39A;line-height:1.5">'
+        + cityById(state.city).name + ' is at ' + p
+        + '%. Worth lining up childcare and work-from-home the night before.</div>';
+      el.onclick = ()=>{ state.dayIdx = i; render(); };
+      return;
+    }
+  }
+  el.hidden = true;
+}
 
-const lgu = document.getElementById("lguLinks");
-CITIES.forEach(c => {
-  const a = document.createElement("a");
-  a.href = "https://www.facebook.com/" + c.fb;
-  a.target = "_blank"; a.rel = "noopener";
-  a.textContent = c.name;
-  lgu.appendChild(a);
-});
+function renderAnns(){
+  const el = $("anns");
+  if (!state.anns.length){
+    el.innerHTML = '<div class="card" style="font-size:14px;color:var(--soft);line-height:1.55">'
+      + 'No Metro Manila city has announced a suspension in the last 24 hours. '
+      + 'Most are posted between 4:30 and 6:00am.</div>';
+    return;
+  }
+  el.innerHTML = state.anns.map(a=>
+    '<div class="ann"><div style="font-weight:700;font-size:15px">'+a.city+'</div>'
+    + '<div style="font-size:13px;color:#C9B4B4;margin-top:3px">'+esc(a.title)+'</div>'
+    + '<div style="font-size:12px;color:#8E7E82;margin-top:5px">'+esc(a.src)
+    + (a.when ? " · " + a.when.toLocaleTimeString("en-PH",{hour:"numeric",minute:"2-digit",timeZone:"Asia/Manila"}) : "")
+    + ' · <a href="'+a.link+'" target="_blank" rel="noopener">Open source</a></div></div>').join("");
+}
 
-document.getElementById("setBtn").onclick = e => {
-  const panel = document.getElementById("settings");
-  const open = panel.classList.toggle("hidden");
-  e.target.setAttribute("aria-pressed", !open);
+function renderRank(){
+  const rows = CITIES.map(c=>({c, p: val(c.id, state.dayIdx)}))
+    .filter(r=>r.p != null).sort((a,b)=>b.p - a.p);
+  $("rank").innerHTML = rows.map(r=>
+    '<button class="rank" data-id="'+r.c.id+'" aria-pressed="'+(r.c.id===state.city)+'">'
+    + '<span style="flex:1;font-size:14px">'+r.c.name+'</span>'
+    + '<span class="bar"><i style="width:'+r.p+'%;background:'+band(r.p).bg+'"></i></span>'
+    + '<span style="width:30px;text-align:right;font-family:\'Archivo Narrow\';font-weight:700;font-size:16px">'
+    + r.p+'</span></button>').join("");
+  [...document.querySelectorAll(".rank")].forEach(b=>{
+    b.onclick = ()=>{ state.city = b.dataset.id; saveSettings(); render(); };
+  });
+}
+
+function esc(s){ return s.replace(/[&<>"]/g, m => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[m])); }
+
+/* ---------- boot ---------- */
+function renderThresholds(){
+  $("thr").innerHTML = THRESHOLDS.map(t =>
+    '<button data-t="'+t+'" aria-pressed="'+(t===state.threshold)+'">'+t+'%</button>').join("");
+  [...$("thr").children].forEach(b=>{
+    b.onclick = ()=>{ state.threshold = +b.dataset.t; saveSettings(); renderThresholds(); render(); };
+  });
+}
+
+async function refresh(){
+  $("btnRef").textContent = "Reading…";
+  state.days = schoolDays();
+  state.conf = {};
+  try{ await loadWeather(); }
+  catch(e){
+    $("heroBody").textContent = "Could not reach the weather service. Check your connection and refresh.";
+  }
+  try{ await loadAnnouncements(); }
+  catch(e){
+    state.anns = [];
+  }
+  render();
+  $("btnRef").textContent = "Refresh";
+}
+
+loadSettings();
+renderThresholds();
+$("btnSet").onclick = ()=>{
+  const s = $("settings"); s.hidden = !s.hidden;
+  $("btnSet").setAttribute("aria-pressed", !s.hidden);
 };
-document.getElementById("refreshBtn").onclick = load;
-
-render();
-load();
+$("btnRef").onclick = refresh;
+refresh();
+setInterval(refresh, 15*60*1000);
 </script>
 </body>
 </html>
