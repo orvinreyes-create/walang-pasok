@@ -5,6 +5,17 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Walang Pasok Watch — Metro Manila</title>
 <meta name="description" content="Class suspension outlook for all 17 Metro Manila cities, today and the next four school days." />
+
+<link rel="manifest" href="./manifest.webmanifest" />
+<meta name="theme-color" content="#141D29" />
+<link rel="icon" type="image/png" sizes="32x32" href="./favicon-32.png" />
+<link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png" />
+<link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Walang Pasok" />
+
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;700&family=Archivo+Narrow:wght@600;700&display=swap" rel="stylesheet">
@@ -17,7 +28,8 @@
   *{box-sizing:border-box}
   body{margin:0;background:var(--ground);color:var(--ink);
        font-family:Archivo,system-ui,-apple-system,sans-serif;-webkit-font-smoothing:antialiased}
-  .wrap{max-width:560px;margin:0 auto;padding:20px 16px 56px}
+  .wrap{max-width:560px;margin:0 auto;
+        padding:calc(20px + env(safe-area-inset-top)) 16px calc(56px + env(safe-area-inset-bottom))}
   h1{font-family:'Archivo Narrow',sans-serif;font-weight:700;font-size:30px;margin:0;line-height:1;letter-spacing:-.01em}
   h2{font-family:'Archivo Narrow',sans-serif;font-weight:700;font-size:19px;margin:26px 0 8px}
   p{line-height:1.55}
@@ -339,41 +351,79 @@ async function fetchText(url){
   return null;
 }
 
-function todaySlug(){
+function daySlug(offset){
   const d = manilaNow();
-  const mon = d.toLocaleDateString("en-US",{month:"long"}).toLowerCase();
-  return {mon, day:d.getDate(), year:d.getFullYear()};
+  d.setDate(d.getDate() + (offset||0));
+  return {
+    mon: d.toLocaleDateString("en-US",{month:"long"}).toLowerCase(),
+    day: d.getDate(),
+    year: d.getFullYear()
+  };
+}
+
+/* Which of our five school days does this article cover?
+   Roundups for tomorrow are published the evening before, so the date in the
+   article body — not the fetch time — decides which day a suspension applies to. */
+const MONTHS = ["january","february","march","april","may","june","july",
+                "august","september","october","november","december"];
+function detectDay(text){
+  const head = text.slice(0, 1200).toLowerCase();
+  const m = head.match(/(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2}),?\s+(\d{4})/);
+  if (!m) return -1;
+  const key = m[3] + "-" + String(MONTHS.indexOf(m[1])+1).padStart(2,"0")
+            + "-" + String(+m[2]).padStart(2,"0");
+  return state.days.findIndex(d => d.key === key);
 }
 
 /* Rappler publishes at a fully predictable daily URL; GMA keeps a tracking hub
-   from which today's story link can be pulled. */
-async function roundupTexts(){
-  const {mon,day,year} = todaySlug();
-  const texts = [];
-  const tried = [];
+   from which recent story links can be pulled. We look at today AND the days
+   ahead, because an evening announcement for tomorrow is the whole point. */
+async function roundupDocs(){
+  const docs = [], tried = [];
 
-  const rappler = "https://www.rappler.com/philippines/class-suspensions-walang-pasok-"
-                + mon + "-" + day + "-" + year + "/";
-  const rt = await fetchText(rappler);
-  if (rt){ texts.push(rt); tried.push({name:"Rappler", url:rappler}); }
+  for (const off of [0,1,2]){
+    const {mon,day,year} = daySlug(off);
+    const url = "https://www.rappler.com/philippines/class-suspensions-walang-pasok-"
+              + mon + "-" + day + "-" + year + "/";
+    const t = await fetchText(url);
+    if (t){ docs.push({text:t, url, name:"Rappler"}); tried.push({name:"Rappler", url}); }
+  }
 
   const hub = await fetchText("https://www.gmanetwork.com/news/tracking/walang_pasok/");
   if (hub){
     const m = hub.match(/https?:\/\/www\.gmanetwork\.com\/news\/[^\s")\]]*\/story\/?/g) || [];
-    const uniq = [...new Set(m)].slice(0,3);
-    for (const u of uniq){
+    for (const u of [...new Set(m)].slice(0,4)){
       const t = await fetchText(u);
       if (t && /class suspension|walang pasok|suspendido/i.test(t)){
-        texts.push(t); tried.push({name:"GMA News", url:u});
-        break;
+        docs.push({text:t, url:u, name:"GMA News"});
+        tried.push({name:"GMA News", url:u});
+        if (docs.filter(d=>d.name==="GMA News").length >= 2) break;
       }
     }
   }
   state.sources = tried;
-  return texts;
+  return docs;
 }
 
 const SUSPEND_RE = /suspend|walang pasok|no (face-to-face|in-person)? ?classes|cancel|alternative (learning|delivery)|distance learning|shift to|all levels|face-to-face classes|public and private/i;
+
+/* r.jina.ai returns Markdown, and roundups wrap city names in links to the
+   LGU's own Facebook post. Keep the readable text, keep the URL separately. */
+function cleanDetail(line){
+  let link = null;
+  const first = line.match(/\[[^\]]*\]\((https?:\/\/[^)\s]+)\)/);
+  if (first) link = first[1];
+  let text = line
+    .replace(/\[([^\]]*)\]\((?:https?:\/\/)[^)\s]*\)/g, "$1")
+    .replace(/https?:\/\/\S+/g, "")
+    .replace(/[*_`#]/g, "")
+    .replace(/^[\s•·\-–—]+/, "")
+    .replace(/\s+/g, " ")
+    .replace(/\s+([,;.])/g, "$1")
+    .trim();
+  if (text.length > 190) text = text.slice(0,187) + "…";
+  return {text, link};
+}
 
 /* A city counts as announced only when its name and suspension wording appear
    on the same line, and the line is not a dateline. */
@@ -395,30 +445,39 @@ function matchCities(text){
       else if (c.id === "PAT") re = new RegExp("\\bPateros\\b","i");
       else                     re = new RegExp("\\b"+nm+"(\\s+City)?\\b","i");
       if (!re.test(flat)) return;
-      let detail = line.replace(/^[\s•·\-–—*]+/,"");
-      if (detail.length > 190) detail = detail.slice(0,187) + "…";
-      found[c.id] = detail;
+      found[c.id] = cleanDetail(line);
     });
   });
   return found;
 }
 
 async function loadAnnouncements(){
-  const texts = await roundupTexts();
-  if (!texts.length) throw new Error("no source reachable");
-  const merged = {};
-  texts.forEach(t=>{
-    const f = matchCities(t);
-    Object.keys(f).forEach(id=>{ if(!merged[id]) merged[id]=f[id]; });
+  const docs = await roundupDocs();
+  if (!docs.length) throw new Error("no source reachable");
+
+  const byDay = {};
+  docs.forEach(d=>{
+    let idx = detectDay(d.text);
+    if (idx < 0) idx = 0;
+    const hits = matchCities(d.text);
+    byDay[idx] = byDay[idx] || {};
+    Object.keys(hits).forEach(id=>{ if(!byDay[idx][id]) byDay[idx][id] = hits[id]; });
   });
+
   state.conf = {};
   state.anns = [];
-  Object.keys(merged).forEach(id=>{
-    state.conf[id] = true;
-    state.anns.push({city:cityById(id).name, detail:merged[id]});
+  Object.keys(byDay).forEach(idx=>{
+    const i = +idx;
+    state.conf[i] = {};
+    Object.keys(byDay[i]).forEach(id=>{
+      state.conf[i][id] = true;
+      state.anns.push({dayIdx:i, city:cityById(id).name,
+                       detail:byDay[i][id].text, link:byDay[i][id].link});
+    });
   });
-  state.anns.sort((a,b)=>a.city.localeCompare(b.city));
+  state.anns.sort((a,b)=> a.dayIdx - b.dayIdx || a.city.localeCompare(b.city));
 }
+const isOff = (cityId, dayIdx) => !!(state.conf[dayIdx] && state.conf[dayIdx][cityId]);
 
 /* ================= rendering ================= */
 const $ = id => document.getElementById(id);
@@ -438,7 +497,7 @@ function render(){
 
 function renderHero(){
   const c = cityById(state.city), i = state.dayIdx;
-  const off = i===0 && state.conf[c.id];
+  const off = isOff(c.id, i);
   const s = cell(c.id,i), p = s ? s.p : null;
   $("heroWho").textContent = c.name + " · " + (state.days[i] ? state.days[i].full : "—");
   const top = $("heroTop");
@@ -478,10 +537,11 @@ function renderDays(){
     const s = cell(state.city,i);
     const b = document.createElement("button");
     b.className="day"; b.setAttribute("aria-pressed", i===state.dayIdx);
+    const doff = isOff(state.city, i);
     b.innerHTML = "<small>"+d.label+"</small>"
       + (s ? icon(s.ico,"dico") : "")
-      + "<b>"+(s?s.p:"–")+"</b>"
-      + '<i class="sw" style="background:'+(s?band(s.p).bg:"#2A3A4D")+'"></i>';
+      + "<b>"+(doff ? "OFF" : (s?s.p:"–"))+"</b>"
+      + '<i class="sw" style="background:'+(doff?"var(--off)":(s?band(s.p).bg:"#2A3A4D"))+'"></i>';
     b.onclick = ()=>{ state.dayIdx=i; render(); };
     el.appendChild(b);
   });
@@ -491,7 +551,7 @@ function renderMap(){
   const el = $("map"); el.innerHTML = "";
   CITIES.forEach(c=>{
     const s = cell(c.id,state.dayIdx);
-    const off = state.dayIdx===0 && state.conf[c.id];
+    const off = isOff(c.id, state.dayIdx);
     const b = s ? band(s.p) : null;
     const t = document.createElement("button");
     t.className="tile"; t.title=c.name;
@@ -529,21 +589,32 @@ function renderAnns(){
   const el = $("anns");
   const src = state.sources.length
     ? '<div style="font-size:12px;color:var(--mute);margin-top:10px">Read from '
-      + state.sources.map(s=>'<a href="'+s.url+'" target="_blank" rel="noopener" style="color:#8FB3DA">'
-      + s.name+'</a>').join(" and ") + '.</div>'
+      + [...new Set(state.sources.map(s=>s.name))].join(" and ")
+      + ", covering today and the days already published.</div>"
     : "";
   if (!state.anns.length){
     el.innerHTML = '<div class="card" style="font-size:14px;color:var(--soft);line-height:1.55">'
       + (state.sources.length
-          ? "No Metro Manila city appears in today's roundups yet. Most are posted between 4:30 and 6:00am."
+          ? "No Metro Manila city appears in the published roundups yet. Most are posted between 4:30 and 6:00am, and evening announcements for the next day show up here too."
           : "Couldn't reach the roundup sources just now. Check GMA or Rappler directly, then refresh.")
       + '</div>' + src;
     return;
   }
-  el.innerHTML = state.anns.map(a=>
-      '<div class="ann"><div style="font-weight:700;font-size:15px">'+a.city+'</div>'
-    + '<div style="font-size:13px;color:#C9B4B4;margin-top:3px">'+esc(a.detail)+'</div></div>'
-  ).join("") + src;
+  let html = "", lastDay = -1;
+  state.anns.forEach(a=>{
+    if (a.dayIdx !== lastDay){
+      lastDay = a.dayIdx;
+      const d = state.days[a.dayIdx];
+      html += '<div style="font-size:13px;font-weight:700;color:var(--soft);margin:14px 0 8px">'
+            + (a.dayIdx===0 ? "Today" : "Announced ahead for " + (d?d.full:"a later day")) + '</div>';
+    }
+    html += '<div class="ann"><div style="font-weight:700;font-size:15px">'+esc(a.city)+'</div>'
+          + '<div style="font-size:13px;color:#C9B4B4;margin-top:3px">'+esc(a.detail)+'</div>'
+          + (a.link ? '<div style="font-size:12px;margin-top:5px"><a href="'+esc(a.link)
+              + '" target="_blank" rel="noopener">Official post</a></div>' : "")
+          + '</div>';
+  });
+  el.innerHTML = html + src;
 }
 
 function renderRank(){
