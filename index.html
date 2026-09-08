@@ -190,7 +190,7 @@ const band = p => BANDS.find(b => p < b.max) || BANDS[3];
 const THRESHOLDS = [40,50,60,70];
 
 let state = { city:"QZN", threshold:60, dayIdx:0, days:[], scores:{},
-              conf:{}, anns:[], sys:"", locMsg:"", sources:[], stale:[] };
+              conf:{}, anns:[], sys:"", locMsg:"", sources:[], stale:[], checked:null };
 
 /* ================= weather icons ================= */
 /* chosen from peak hourly + daily total, so the glyph agrees with the number */
@@ -341,9 +341,12 @@ const TEXT_PROXIES = [
 ];
 
 async function fetchText(url){
+  /* Proxies cache hard, and a cached copy from 20 minutes ago is exactly what
+     hides a suspension announced 5 minutes ago. Bust the cache every call. */
+  const fresh = url + (url.indexOf("?") === -1 ? "?" : "&") + "_=" + Date.now();
   for (const p of TEXT_PROXIES){
     try{
-      const r = await fetch(p(url));
+      const r = await fetch(p(fresh), {cache:"no-store"});
       if (!r.ok) continue;
       const t = await r.text();
       if (t && t.length > 500) return t;
@@ -543,8 +546,12 @@ const val = (id,i) => cell(id,i) ? cell(id,i).p : null;
 
 function render(){
   const c = cityById(state.city);
-  $("subline").textContent = "Home city: " + c.name + ". Alerting at " + state.threshold
-    + "% and above." + (state.locMsg ? " " + state.locMsg : "");
+  const stamp = state.checked
+    ? state.checked.toLocaleTimeString("en-PH",{hour:"numeric",minute:"2-digit",timeZone:"Asia/Manila"})
+    : null;
+  $("subline").textContent = "Home city: " + c.name + ". Alerting at " + state.threshold + "% and above."
+    + (stamp ? " Last checked " + stamp + "." : "")
+    + (state.locMsg ? " " + state.locMsg : "");
   $("locNote").textContent = state.locMsg
     || "Or tap any tile on the map to set your home city by hand. Both settings are saved on this device.";
   renderHero(); renderLegend(); renderDays(); renderMap();
@@ -720,6 +727,7 @@ async function refresh(){
   render();
   try{ await loadAnnouncements(); }
   catch(e){ state.anns=[]; state.conf={}; }
+  state.checked = new Date();
   render();
   $("btnRef").textContent = "Refresh";
 }
@@ -734,7 +742,15 @@ $("btnRef").onclick = refresh;
 $("btnLoc").onclick = ()=>useLocation(false);
 refresh();
 if (!hadSaved) useLocation(true);   // first visit: ask once, fall back to Quezon City
-setInterval(refresh, 15*60*1000);
+
+/* Announcements land in bursts around 4:30-6:00am and again in the evening,
+   so check often, and always re-check the moment the app is brought forward. */
+setInterval(()=>{ if (!document.hidden) refresh(); }, 5*60*1000);
+document.addEventListener("visibilitychange", ()=>{
+  if (document.hidden) return;
+  if (state.checked && Date.now() - state.checked.getTime() < 60*1000) return;
+  refresh();
+});
 </script>
 </body>
 </html>
