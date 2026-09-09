@@ -113,20 +113,30 @@
     <button class="locbtn" id="btnDiag">Show source status</button>
     <button class="locbtn" id="btnCopy" hidden>Copy source status</button>
 
-    <div style="font-size:14px;font-weight:700;margin-top:16px">City feeds (Facebook)</div>
+    <div style="font-size:14px;font-weight:700;margin-top:16px">Facebook page search (optional)</div>
     <p style="font-size:12px;color:var(--mute);margin:6px 0 8px;line-height:1.5">
-      Facebook can't be read directly by any website — see the note below. Free
-      services like RSS.app or FetchRSS turn a public page into a feed. Make one
-      per city, then paste them here, one per line, as <b>CODE|feed-url</b>.
-      Use <b>ALL</b> as the code for a metro-wide feed.
+      Leave this empty and the app works normally from the news roundups. It's
+      here only if you later want the cities' own Facebook posts, which are
+      faster than newsrooms but unreachable without Google's Programmable Search
+      API. Nothing is sent anywhere unless you fill both fields.
     </p>
-    <textarea id="feeds" spellcheck="false" placeholder="QZN|https://rss.app/feeds/xxxx.xml
-MRK|https://rss.app/feeds/yyyy.xml
-PSG|https://rss.app/feeds/zzzz.xml"
+    <input id="cseKey" placeholder="Google API key" autocomplete="off" spellcheck="false"
+      style="width:100%;background:#141D29;color:var(--ink);border:1px solid var(--edge);
+             border-radius:8px;padding:9px;font:12px ui-monospace,Menlo,monospace;margin-bottom:6px">
+    <input id="cseId" placeholder="Search engine ID (cx)" autocomplete="off" spellcheck="false"
+      style="width:100%;background:#141D29;color:var(--ink);border:1px solid var(--edge);
+             border-radius:8px;padding:9px;font:12px ui-monospace,Menlo,monospace">
+
+    <div style="font-size:13px;font-weight:700;margin-top:14px">City pages</div>
+    <p style="font-size:12px;color:var(--mute);margin:6px 0 8px;line-height:1.5">
+      One per line, as <b>CODE|facebook-handle</b>. Results are matched to a city
+      by handle, so add every page you put in the search engine.
+    </p>
+    <textarea id="feeds" spellcheck="false" placeholder="QZN|QCGov"
       style="width:100%;height:104px;background:#141D29;color:var(--ink);
              border:1px solid var(--edge);border-radius:8px;padding:9px;
              font:11px ui-monospace,Menlo,Consolas,monospace;line-height:1.5"></textarea>
-    <button class="locbtn" id="btnFeeds">Save feeds</button>
+    <button class="locbtn" id="btnFeeds">Save search settings</button>
     <p style="font-size:11px;color:var(--mute);margin:8px 0 0;line-height:1.5">
       City codes: <span id="codes"></span>
     </p>
@@ -222,7 +232,7 @@ const band = p => BANDS.find(b => p < b.max) || BANDS[3];
 const THRESHOLDS = [40,50,60,70];
 
 let state = { city:"QZN", threshold:60, dayIdx:0, days:[], scores:{},
-              conf:{}, anns:[], sys:"", locMsg:"", sources:[], stale:[], lguOk:[], lguFail:[], diag:[], feeds:[], feedsRaw:"", phase:"", done:0, total:0, checked:null, loading:false, loadStart:0, estMs:14000 };
+              conf:{}, anns:[], sys:"", locMsg:"", sources:[], stale:[], lguOk:[], lguFail:[], diag:[], feeds:[], feedsRaw:"", cseKey:"", cseId:"", cseCache:null, phase:"", done:0, total:0, checked:null, loading:false, loadStart:0, estMs:14000 };
 
 /* ================= weather icons ================= */
 /* chosen from peak hourly + daily total, so the glyph agrees with the number */
@@ -481,87 +491,108 @@ function detectDay(text){
    that post only to Facebook will stay dependent on the roundups; those sources
    simply fail quietly and are reported under coverage. */
 const LGU_SOURCES = [
-  /* Kept: measured reachable through the one working proxy.
-     Dropped: sites that return a JS shell (Pasig 156b, Parañaque 191b,
-     Pateros 463b, Taguig 475b) — no text proxy can ever read those — and
-     sites that only ever time out. Those cities fall back to the roundups.
-     Volume is the enemy now: one proxy, rate-limited, so fewer and better. */
-  {id:"QZN", name:"Quezon City", url:"https://quezoncity.gov.ph/news-and-media/announcements/"},
-  {id:"MNL", name:"Manila",      url:"https://manila.gov.ph/"},
-  {id:"MRK", name:"Marikina",    url:"https://marikina.gov.ph/"},
-  {id:"CAL", name:"Caloocan",    url:"https://caloocancity.gov.ph/"},
-  {id:"PSY", name:"Pasay",       url:"https://pasay.gov.ph/"}
+  /* Deliberately short. The roundups plus QC's own site is the configuration
+     that worked. Adding sixteen more sites pushed each refresh to ~63 proxy
+     calls and rate-limited the one working proxy, which broke everything
+     including the roundups. Volume was the bug. */
+  {id:"QZN", name:"Quezon City", url:"https://quezoncity.gov.ph/news-and-media/announcements/"}
 ];
 
-/* Cities with no readable site — shown in coverage so the gap is explicit
-   rather than silent. */
-const NO_SITE = ["Makati","Pasig","Taguig","Valenzuela","Muntinlupa","Navotas",
-                 "Malabon","Mandaluyong","Parañaque","San Juan","Las Piñas","Pateros"];
+/* Every other city is covered by the news roundups, which do list all 17. */
+const NO_SITE = [];
 
-/* ---- user-supplied feeds ----
-   A city's own Facebook page is the fastest and most authoritative source, but
-   no browser-side code can read facebook.com: FB sends no CORS headers, so the
-   response is unreadable cross-origin even when the page is public and you are
-   logged out. Feed services do the reading server-side and republish it as a
-   CORS-enabled feed, which a page like this one CAN consume. */
+/* ---- optional: official Facebook page search ----
+   Off unless both an API key and a search engine ID are saved in Settings.
+   A raw Google "site:" scrape can't be called from a website (no CORS, and
+   automated access is disallowed); the Programmable Search JSON API is the
+   supported equivalent. Free tier is 100 queries/day, hence the throttle. */
+
+const DEFAULT_PAGES = "QZN|QCGov\nMRK|MarikinaPIO\nPSG|PasigPIO";
+const CSE_MIN_GAP_MS = 15 * 60 * 1000;
+
 function loadFeeds(){
   try{
-    const raw = localStorage.getItem("wpw:feeds") || "";
-    state.feeds = raw.split(/\n+/).map(l=>l.trim()).filter(Boolean).map(l=>{
+    const raw = localStorage.getItem("wpw:pages");
+    state.feedsRaw = (raw === null) ? DEFAULT_PAGES : raw;
+    state.feeds = state.feedsRaw.split(/\n+/).map(l=>l.trim()).filter(Boolean).map(l=>{
       const i = l.indexOf("|");
       if (i < 0) return null;
       const id = l.slice(0,i).trim().toUpperCase();
-      const url = l.slice(i+1).trim();
-      if (!/^https?:\/\//.test(url)) return null;
-      if (id !== "ALL" && !CITIES.some(c=>c.id===id)) return null;
-      return {id, url};
+      const handle = l.slice(i+1).trim()
+        .replace(/^https?:\/\/(www\.)?facebook\.com\//i,"").replace(/\/+$/,"");
+      if (!handle || !CITIES.some(c=>c.id===id)) return null;
+      return {id, handle};
     }).filter(Boolean);
-    state.feedsRaw = raw;
-  }catch(e){ state.feeds = []; state.feedsRaw = ""; }
+    state.cseKey = localStorage.getItem("wpw:csekey") || "";
+    state.cseId  = localStorage.getItem("wpw:cseid")  || "";
+  }catch(e){
+    state.feeds = []; state.feedsRaw = DEFAULT_PAGES;
+    state.cseKey = ""; state.cseId = "";
+  }
 }
 
-/* Feed services send CORS headers, so try direct first — no proxy, no rate
-   limit, and much faster. Fall back to the proxy chain only if that fails. */
-async function fetchFeed(url){
-  const r = await fetchOnce(url);
-  if (r.text){ state.diag.push({url, ok:true, detail:"direct: " + r.why}); state.done++; return r.text; }
-  state.diag.push({url, ok:false, detail:"direct: " + r.why + " — retrying via proxy"});
-  return await fetchText(url);
-}
+/* One query per school day, not per city: results carry the page URL, so a
+   single search covers every mapped page at once. */
+async function cseSearch(dayIdx){
+  const d = state.days[dayIdx];
+  if (!d) return [];
+  const human = new Date(d.key + "T00:00:00")
+    .toLocaleDateString("en-US",{month:"long", day:"numeric", year:"numeric"});
+  const q = '"' + human + '" (walang pasok OR "suspension of classes" OR suspendido)';
+  const url = "https://www.googleapis.com/customsearch/v1?key=" + encodeURIComponent(state.cseKey)
+            + "&cx=" + encodeURIComponent(state.cseId)
+            + "&num=10&q=" + encodeURIComponent(q);
 
-function scanFeed(text){
-  /* Works for RSS/Atom XML and for JSON feeds: we only need item text plus a
-     date, so the raw payload is scanned rather than strictly parsed. */
-  const hits = new Set();
-  const chunks = text.split(/<\/item>|<\/entry>|\},\s*\{/i);
-  chunks.forEach(chunk=>{
-    if (!WP_RE.test(chunk)) return;
-    const flat = chunk.replace(/<[^>]+>/g," ").replace(/\\[nrt]/g," ").replace(/\s+/g," ");
-    let m = flat.match(DATE_RE);
-    if (m){
-      const i = state.days.findIndex(d => d.key === keyFrom(m[1], m[2], m[3]));
-      if (i >= 0){ hits.add(i); return; }
+  const r = await fetchOnce(url);      // CORS-enabled: no proxy needed
+  state.done++;
+  if (!r.text){
+    state.diag.push({url:"Google CSE (" + d.key + ")", ok:false, detail:r.why});
+    return [];
+  }
+  let data;
+  try{ data = JSON.parse(r.text); }
+  catch(e){ state.diag.push({url:"Google CSE (" + d.key + ")", ok:false, detail:"bad JSON"}); return []; }
+  if (data.error){
+    state.diag.push({url:"Google CSE (" + d.key + ")", ok:false,
+                     detail:"API: " + (data.error.message || "error")});
+    return [];
+  }
+  const items = data.items || [];
+  state.diag.push({url:"Google CSE (" + d.key + ")", ok:true, detail:"ok " + items.length + " results"});
+
+  const out = [];
+  items.forEach(it=>{
+    const link = (it.link || "") + " " + (it.formattedUrl || "");
+    const text = (it.title || "") + " " + (it.snippet || "");
+    if (!WP_RE.test(text)) return;
+    if (text.indexOf(human) < 0){
+      const m = text.match(DATE_RE);
+      if (!m || keyFrom(m[1],m[2],m[3]) !== d.key) return;
     }
-    /* "bukas" / "tomorrow" with no explicit date means the next school day. */
-    if (/\bbukas\b|\btomorrow\b/i.test(flat) && state.days[1]) hits.add(1);
+    state.feeds.forEach(p=>{
+      const re = new RegExp("facebook\\.com/" + p.handle.replace(/[.*+?^${}()|[\]\\]/g,"\\$&"), "i");
+      if (!re.test(link)) return;
+      out.push({cityId:p.id, dayIdx, name:cityById(p.id).name + " (official Facebook page)",
+                url:it.link,
+                detail:(it.snippet || "Suspension announced on the city's official page.")
+                        .replace(/\s+/g," ").slice(0,190)});
+    });
   });
-  return [...hits];
+  return out;
 }
 
 async function feedDocs(){
-  if (!state.feeds || !state.feeds.length) return [];
-  const out = [];
-  const results = await pool(state.feeds, 4, async f=>({f, t: await fetchFeed(f.url)}));
-  results.forEach(({f,t})=>{
-    if (!t) return;
-    scanFeed(t).forEach(dayIdx=>{
-      const ids = f.id === "ALL" ? CITIES.map(c=>c.id) : [f.id];
-      ids.forEach(cityId=>{
-        out.push({cityId, dayIdx, name:cityById(cityId).name + " (official page feed)",
-                  url:f.url, detail:"Suspension announced on the city's official page."});
-      });
-    });
-  });
+  if (!state.cseKey || !state.cseId || !state.feeds.length) return [];
+  const last = +(localStorage.getItem("wpw:cseat") || 0);
+  if (Date.now() - last < CSE_MIN_GAP_MS && state.cseCache){
+    state.diag.push({url:"Google CSE", ok:true, detail:"cached (throttled to protect quota)"});
+    return state.cseCache;
+  }
+  const days = [0,1].filter(i=>state.days[i]);
+  const res = await pool(days, 2, i=>cseSearch(i));
+  const out = [].concat.apply([], res);
+  state.cseCache = out;
+  try{ localStorage.setItem("wpw:cseat", String(Date.now())); }catch(e){}
   return out;
 }
 
@@ -603,8 +634,8 @@ function scanLguPage(text){
 async function lguDocs(){
   /* Four at a time, one proxy each: fast enough, and stays under the rate limits
      that made an all-at-once burst fail for every source including the roundups. */
-  const results = await pool(LGU_SOURCES, 3, async s=>{
-    const t = await fetchText(s.url, s.id === "QZN" ? undefined : {single:true});
+  const results = await pool(LGU_SOURCES, 2, async s=>{
+    const t = await fetchText(s.url);
     return {s, t};
   });
 
@@ -777,7 +808,7 @@ async function loadAnnouncements(){
 
   /* Phase 1: newsroom roundups. Committed and rendered immediately so a slow
      city-site sweep never delays or hides what we already know. */
-  state.phase = "news roundups"; state.total = 8; state.done = 0;
+  state.phase = "news roundups"; state.total = 5; state.done = 0;
   const docs = await roundupDocs();
   docs.forEach(d=>{
     const hits = matchCities(d.text);           // d.dayIdx is already validated
@@ -802,8 +833,8 @@ async function loadAnnouncements(){
   });
   /* Phase 3: user-supplied city page feeds — the closest thing to the LGU
      itself, so these take precedence over everything above. */
-  if (state.feeds && state.feeds.length){
-    state.phase = "city page feeds"; state.total = state.feeds.length; state.done = 0;
+  if (state.cseKey && state.cseId && state.feeds.length){
+    state.phase = "Facebook page search"; state.total = 2; state.done = 0;
     render();
     let fd = [];
     try{ fd = await feedDocs(); }
@@ -966,7 +997,7 @@ function renderAnns(){
       + (state.lguFail.length
           ? ". Not reachable today: " + state.lguFail.join(", ")
           : "")
-      + ". No readable site (roundups only): " + NO_SITE.join(", ") + ".</div>"
+      + ". All other cities come from the news roundups.</div>"
     : "";
   const skipped = (state.stale && state.stale.length)
     ? '<div style="font-size:12px;color:var(--mute);margin-top:6px">Ignored '
@@ -1104,12 +1135,20 @@ loadEstimate();
 loadFeeds();
 const hadSaved = loadSettings();
 $("feeds").value = state.feedsRaw || "";
+$("cseKey").value = state.cseKey || "";
+$("cseId").value  = state.cseId  || "";
 $("codes").textContent = CITIES.map(c=>c.id + "=" + c.name).join(", ");
 $("btnFeeds").onclick = ()=>{
-  try{ localStorage.setItem("wpw:feeds", $("feeds").value); }catch(e){}
+  try{
+    localStorage.setItem("wpw:pages",  $("feeds").value);
+    localStorage.setItem("wpw:csekey", $("cseKey").value.trim());
+    localStorage.setItem("wpw:cseid",  $("cseId").value.trim());
+    localStorage.setItem("wpw:cseat", "0");     // allow an immediate search
+  }catch(e){}
   loadFeeds();
-  $("btnFeeds").textContent = "Saved — " + state.feeds.length + " feed(s)";
-  setTimeout(()=>{ $("btnFeeds").textContent = "Save feeds"; }, 1800);
+  state.cseCache = null;
+  $("btnFeeds").textContent = "Saved — " + state.feeds.length + " page(s)";
+  setTimeout(()=>{ $("btnFeeds").textContent = "Save search settings"; }, 1800);
   refresh();
 };
 renderThresholds();
