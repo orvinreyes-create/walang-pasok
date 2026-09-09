@@ -111,6 +111,7 @@
     <div class="thr" id="thr"></div>
     <button class="locbtn" id="btnLoc">Use my current location</button>
     <button class="locbtn" id="btnDiag">Show source status</button>
+    <button class="locbtn" id="btnCopy" hidden>Copy source status</button>
     <div id="diag" hidden style="margin-top:10px;font-size:11px;line-height:1.5;
          color:var(--soft);max-height:260px;overflow:auto;background:#141D29;
          border:1px solid var(--edge);border-radius:8px;padding:10px;
@@ -462,24 +463,22 @@ function detectDay(text){
    that post only to Facebook will stay dependent on the roundups; those sources
    simply fail quietly and are reported under coverage. */
 const LGU_SOURCES = [
-  {id:"QZN", name:"Quezon City",  url:"https://quezoncity.gov.ph/news-and-media/announcements/"},
-  {id:"MNL", name:"Manila",       url:"https://manila.gov.ph/"},
-  {id:"MAK", name:"Makati",       url:"https://makati.gov.ph/"},
-  {id:"PSG", name:"Pasig",        url:"https://www.pasigcity.gov.ph/"},
-  {id:"TAG", name:"Taguig",       url:"https://www.taguig.gov.ph/"},
-  {id:"MRK", name:"Marikina",     url:"https://marikina.gov.ph/"},
-  {id:"VAL", name:"Valenzuela",   url:"https://valenzuela.gov.ph/"},
-  {id:"CAL", name:"Caloocan",     url:"https://caloocancity.gov.ph/"},
-  {id:"MUN", name:"Muntinlupa",   url:"https://www.muntinlupacity.gov.ph/"},
-  {id:"NAV", name:"Navotas",      url:"https://navotas.gov.ph/"},
-  {id:"MAL", name:"Malabon",      url:"https://malabon.gov.ph/"},
-  {id:"MND", name:"Mandaluyong",  url:"https://mandaluyong.gov.ph/"},
-  {id:"SJN", name:"San Juan",     url:"https://sanjuancity.gov.ph/"},
-  {id:"PSY", name:"Pasay",        url:"https://pasay.gov.ph/"},
-  {id:"PAR", name:"Parañaque",    url:"https://paranaquecity.gov.ph/"},
-  {id:"LSP", name:"Las Piñas",    url:"https://laspinascity.gov.ph/"},
-  {id:"PAT", name:"Pateros",      url:"https://pateros.gov.ph/"}
+  /* Kept: measured reachable through the one working proxy.
+     Dropped: sites that return a JS shell (Pasig 156b, Parañaque 191b,
+     Pateros 463b, Taguig 475b) — no text proxy can ever read those — and
+     sites that only ever time out. Those cities fall back to the roundups.
+     Volume is the enemy now: one proxy, rate-limited, so fewer and better. */
+  {id:"QZN", name:"Quezon City", url:"https://quezoncity.gov.ph/news-and-media/announcements/"},
+  {id:"MNL", name:"Manila",      url:"https://manila.gov.ph/"},
+  {id:"MRK", name:"Marikina",    url:"https://marikina.gov.ph/"},
+  {id:"CAL", name:"Caloocan",    url:"https://caloocancity.gov.ph/"},
+  {id:"PSY", name:"Pasay",       url:"https://pasay.gov.ph/"}
 ];
+
+/* Cities with no readable site — shown in coverage so the gap is explicit
+   rather than silent. */
+const NO_SITE = ["Makati","Pasig","Taguig","Valenzuela","Muntinlupa","Navotas",
+                 "Malabon","Mandaluyong","Parañaque","San Juan","Las Piñas","Pateros"];
 
 const WP_RE   = /walang[\s\-]?pasok|suspension of (face-to-face )?classes|classes suspended|suspendido ang (face-to-face )?class/i;
 const SLUG_RE = /walang-pasok[a-z0-9\-]*?-(january|february|march|april|may|june|july|august|september|october|november|december)-(\d{1,2})-(\d{4})/gi;
@@ -519,8 +518,8 @@ function scanLguPage(text){
 async function lguDocs(){
   /* Four at a time, one proxy each: fast enough, and stays under the rate limits
      that made an all-at-once burst fail for every source including the roundups. */
-  const results = await pool(LGU_SOURCES, 5, async s=>{
-    const t = await fetchText(s.url, {single:true});
+  const results = await pool(LGU_SOURCES, 3, async s=>{
+    const t = await fetchText(s.url, s.id === "QZN" ? undefined : {single:true});
     return {s, t};
   });
 
@@ -556,7 +555,7 @@ async function roundupDocs(){
   }
 
   /* All three Rappler days at once — sequentially this was three timeouts deep. */
-  const rapplerUrls = [0,1,2].map(off=>{
+  const rapplerUrls = [0,1].map(off=>{
     const {mon,day,year} = daySlug(off);
     return "https://www.rappler.com/philippines/class-suspensions-walang-pasok-"
          + mon + "-" + day + "-" + year + "/";
@@ -866,8 +865,9 @@ function renderAnns(){
     ? '<div style="font-size:12px;color:var(--mute);margin-top:6px">Official city sites read: '
       + (state.lguOk.length ? state.lguOk.join(", ") : "none")
       + (state.lguFail.length
-          ? ". Not reachable (these rely on the news roundups): " + state.lguFail.join(", ")
-          : "") + ".</div>"
+          ? ". Not reachable today: " + state.lguFail.join(", ")
+          : "")
+      + ". No readable site (roundups only): " + NO_SITE.join(", ") + ".</div>"
     : "";
   const skipped = (state.stale && state.stale.length)
     ? '<div style="font-size:12px;color:var(--mute);margin-top:6px">Ignored '
@@ -1014,7 +1014,41 @@ $("btnDiag").onclick = ()=>{
   const d = $("diag");
   d.hidden = !d.hidden;
   $("btnDiag").textContent = d.hidden ? "Show source status" : "Hide source status";
+  $("btnCopy").hidden = d.hidden;
   renderDiag();
+};
+
+function diagText(){
+  const ok = state.diag.filter(d=>d.ok).length;
+  const when = state.checked ? state.checked.toISOString() : "(mid-refresh)";
+  return "Walang Pasok Watch — source status\n"
+    + when + "\n"
+    + ok + " of " + state.diag.length + " reachable\n\n"
+    + state.diag.map(d=> (d.ok ? "OK   " : "FAIL ") + d.url + "\n     " + d.detail).join("\n")
+    + "\n\nDays: " + state.days.map(d=>d.key).join(", ")
+    + "\nConfirmed: " + (state.anns.length
+        ? state.anns.map(a=>a.city + "@d" + a.dayIdx).join(", ") : "none");
+}
+
+$("btnCopy").onclick = async ()=>{
+  const txt = diagText();
+  const done = ()=>{
+    $("btnCopy").textContent = "Copied";
+    setTimeout(()=>{ $("btnCopy").textContent = "Copy source status"; }, 1800);
+  };
+  try{
+    await navigator.clipboard.writeText(txt);
+    done();
+  }catch(e){
+    /* clipboard API needs a secure context and can be refused — fall back to
+       a selectable textarea so the text is still gettable. */
+    const ta = document.createElement("textarea");
+    ta.value = txt;
+    ta.style.cssText = "width:100%;height:160px;margin-top:8px;font-size:11px";
+    $("diag").appendChild(ta);
+    ta.focus(); ta.select();
+    $("btnCopy").textContent = "Select all and copy";
+  }
 };
 refresh();
 if (!hadSaved) useLocation(true);   // first visit: ask once, fall back to Quezon City
