@@ -203,7 +203,7 @@ const band = p => BANDS.find(b => p < b.max) || BANDS[3];
 const THRESHOLDS = [40,50,60,70];
 
 let state = { city:"QZN", threshold:60, dayIdx:0, days:[], scores:{},
-              conf:{}, anns:[], sys:"", locMsg:"", sources:[], stale:[], lguOk:[], lguFail:[], diag:[], checked:null, loading:false, loadStart:0, estMs:14000 };
+              conf:{}, anns:[], sys:"", locMsg:"", sources:[], stale:[], lguOk:[], lguFail:[], diag:[], phase:"", done:0, total:0, checked:null, loading:false, loadStart:0, estMs:14000 };
 
 /* ================= weather icons ================= */
 /* chosen from peak hourly + daily total, so the glyph agrees with the number */
@@ -365,7 +365,7 @@ const TEXT_PROXIES = [
   u => "https://corsproxy.io/?" + encodeURIComponent(u)
 ];
 
-const FETCH_TIMEOUT = 9000;
+const FETCH_TIMEOUT = 7000;
 const PROXY_NAMES = ["r.jina.ai", "allorigins", "corsproxy"];
 
 async function fetchOnce(u){
@@ -396,10 +396,12 @@ async function fetchText(url, opts){
     tries.push(PROXY_NAMES[i] + ": " + r.why);
     if (r.text){
       state.diag.push({url, ok:true, detail:tries.join(" | ")});
+      state.done++;
       return r.text;
     }
   }
   state.diag.push({url, ok:false, detail:tries.join(" | ")});
+  state.done++;
   return null;
 }
 
@@ -517,8 +519,8 @@ function scanLguPage(text){
 async function lguDocs(){
   /* Four at a time, one proxy each: fast enough, and stays under the rate limits
      that made an all-at-once burst fail for every source including the roundups. */
-  const results = await pool(LGU_SOURCES, 3, async s=>{
-    const t = await fetchText(s.url);
+  const results = await pool(LGU_SOURCES, 5, async s=>{
+    const t = await fetchText(s.url, {single:true});
     return {s, t};
   });
 
@@ -564,7 +566,10 @@ async function roundupDocs(){
 
   const hub = await fetchText("https://www.gmanetwork.com/news/tracking/walang_pasok/");
   if (hub){
-    const m = hub.match(/https?:\/\/www\.gmanetwork\.com\/news\/[^\s")\]]*\/story\/?/g) || [];
+    /* The hub page links every top story. Without this filter it fetched
+       unrelated articles (nation/, regions/) and never the roundup itself. */
+    const all = hub.match(/https?:\/\/www\.gmanetwork\.com\/news\/[^\s")\]]*\/story\/?/g) || [];
+    const m = all.filter(u => /walangpasok|serbisyopubliko/i.test(u));
     const urls = [...new Set(m)].slice(0,3);
     const texts = await pool(urls, 3, u=>fetchText(u));
     texts.forEach((t,i)=>{
@@ -688,6 +693,7 @@ async function loadAnnouncements(){
 
   /* Phase 1: newsroom roundups. Committed and rendered immediately so a slow
      city-site sweep never delays or hides what we already know. */
+  state.phase = "news roundups"; state.total = 8; state.done = 0;
   const docs = await roundupDocs();
   docs.forEach(d=>{
     const hits = matchCities(d.text);           // d.dayIdx is already validated
@@ -700,8 +706,11 @@ async function loadAnnouncements(){
   render();
 
   /* Phase 2: the cities' own sites. Authoritative, so these overwrite. */
+  state.phase = "city websites"; state.total = LGU_SOURCES.length; state.done = 0;
+  render();
   let lgu = [];
-  try{ lgu = await lguDocs(); }catch(e){}
+  try{ lgu = await lguDocs(); }
+  catch(e){ state.diag.push({url:"city-site sweep", ok:false, detail:String(e && e.message)}); }
   lgu.forEach(a=>{
     byDay[a.dayIdx] = byDay[a.dayIdx] || {};
     byDay[a.dayIdx][a.cityId] = {text:a.detail, link:a.url};
@@ -913,8 +922,11 @@ function renderRank(){
 function etaText(){
   if (!state.loading) return "";
   const left = Math.ceil((state.estMs - (Date.now() - state.loadStart)) / 1000);
-  if (left > 1) return "about " + left + "s left";
-  return "almost there…";
+  const prog = state.phase
+    ? state.phase + " " + state.done + "/" + state.total
+    : "";
+  const time = left > 1 ? "about " + left + "s left" : "almost there…";
+  return prog ? prog + " · " + time : time;
 }
 let etaTimer = null;
 function startEta(){
@@ -922,6 +934,8 @@ function startEta(){
   etaTimer = setInterval(()=>{
     const el = $("eta");
     if (el) el.textContent = etaText();   // cheap: touch one node, no re-render
+    const dg = $("diag");
+    if (dg && !dg.hidden) renderDiag();
   }, 500);
 }
 function stopEta(){ if (etaTimer){ clearInterval(etaTimer); etaTimer = null; } }
@@ -977,6 +991,7 @@ async function refresh(){
     }
     state.checked = new Date();
   } finally {
+    state.phase = "";
     stopEta();
     recordDuration(Date.now() - state.loadStart);
     state.loading = false;            // always clears, even if something throws
