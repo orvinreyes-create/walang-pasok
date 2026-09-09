@@ -110,6 +110,11 @@
     <div style="font-size:14px;font-weight:700">Tell me when risk reaches</div>
     <div class="thr" id="thr"></div>
     <button class="locbtn" id="btnLoc">Use my current location</button>
+    <button class="locbtn" id="btnDiag">Show source status</button>
+    <div id="diag" hidden style="margin-top:10px;font-size:11px;line-height:1.5;
+         color:var(--soft);max-height:260px;overflow:auto;background:#141D29;
+         border:1px solid var(--edge);border-radius:8px;padding:10px;
+         font-family:ui-monospace,Menlo,Consolas,monospace"></div>
     <p style="font-size:13px;color:var(--mute);margin:10px 0 0" id="locNote">
       Or tap any tile on the map to set your home city by hand. Both settings are saved on this device.
     </p>
@@ -198,7 +203,7 @@ const band = p => BANDS.find(b => p < b.max) || BANDS[3];
 const THRESHOLDS = [40,50,60,70];
 
 let state = { city:"QZN", threshold:60, dayIdx:0, days:[], scores:{},
-              conf:{}, anns:[], sys:"", locMsg:"", sources:[], stale:[], lguOk:[], lguFail:[], checked:null, loading:false, loadStart:0, estMs:14000 };
+              conf:{}, anns:[], sys:"", locMsg:"", sources:[], stale:[], lguOk:[], lguFail:[], diag:[], checked:null, loading:false, loadStart:0, estMs:14000 };
 
 /* ================= weather icons ================= */
 /* chosen from peak hourly + daily total, so the glyph agrees with the number */
@@ -361,38 +366,43 @@ const TEXT_PROXIES = [
 ];
 
 const FETCH_TIMEOUT = 9000;
+const PROXY_NAMES = ["r.jina.ai", "allorigins", "corsproxy"];
 
 async function fetchOnce(u){
-  /* Without an abort, one unresponsive proxy hangs the whole refresh forever. */
   const ac = new AbortController();
   const timer = setTimeout(()=>ac.abort(), FETCH_TIMEOUT);
   try{
     const r = await fetch(u, {cache:"no-store", signal:ac.signal});
-    if (!r.ok) return null;
+    if (!r.ok) return {text:null, why:"HTTP " + r.status};
     const t = await r.text();
-    return (t && t.length > 500) ? t : null;
+    if (!t) return {text:null, why:"empty"};
+    if (t.length <= 500) return {text:null, why:"short (" + t.length + "b)"};
+    return {text:t, why:"ok " + Math.round(t.length/1024) + "kb"};
   }catch(e){
-    return null;
+    return {text:null, why: (e && e.name === "AbortError") ? "timeout" : "blocked/CORS"};
   }finally{
     clearTimeout(timer);
   }
 }
 
+/* Every attempt is recorded so failures can be read off the screen instead of
+   guessed at. Shown under Settings > Source status. */
 async function fetchText(url, opts){
-  /* Bucket the cache-buster to the minute so proxies can still serve a recent
-     copy — a per-millisecond value guaranteed a miss on every request. */
   const bucket = Math.floor(Date.now() / 60000);
   const fresh = url + (url.indexOf("?") === -1 ? "?" : "&") + "_=" + bucket;
-  const proxies = (opts && opts.single) ? TEXT_PROXIES.slice(0,1) : TEXT_PROXIES;
-  for (const p of proxies){
-    const t = await fetchOnce(p(fresh));
-    if (t) return t;
+  const tries = [];
+  for (let i = 0; i < TEXT_PROXIES.length; i++){
+    const r = await fetchOnce(TEXT_PROXIES[i](fresh));
+    tries.push(PROXY_NAMES[i] + ": " + r.why);
+    if (r.text){
+      state.diag.push({url, ok:true, detail:tries.join(" | ")});
+      return r.text;
+    }
   }
+  state.diag.push({url, ok:false, detail:tries.join(" | ")});
   return null;
 }
 
-/* Free proxies rate-limit on bursts. Seventeen city sites fired at once meant
-   every request failed, including the roundups. Cap concurrency instead. */
 async function pool(items, limit, fn){
   const out = new Array(items.length);
   let next = 0;
@@ -507,8 +517,8 @@ function scanLguPage(text){
 async function lguDocs(){
   /* Four at a time, one proxy each: fast enough, and stays under the rate limits
      that made an all-at-once burst fail for every source including the roundups. */
-  const results = await pool(LGU_SOURCES, 4, async s=>{
-    const t = await fetchText(s.url, {single:true});
+  const results = await pool(LGU_SOURCES, 3, async s=>{
+    const t = await fetchText(s.url);
     return {s, t};
   });
 
@@ -720,6 +730,7 @@ function render(){
     + (state.locMsg ? " " + state.locMsg : "");
   $("locNote").textContent = state.locMsg
     || "Or tap any tile on the map to set your home city by hand. Both settings are saved on this device.";
+  renderDiag();
   renderHero(); renderLegend(); renderDays(); renderMap();
   renderAlert(); renderAnns(); renderRank();
 }
@@ -918,6 +929,20 @@ function stopEta(){ if (etaTimer){ clearInterval(etaTimer); etaTimer = null; } }
 const esc = s => s.replace(/[&<>"]/g, m => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[m]));
 
 /* ================= boot ================= */
+function renderDiag(){
+  const el = $("diag");
+  if (!el || el.hidden) return;
+  if (!state.diag.length){ el.textContent = "No fetches recorded yet — tap Refresh."; return; }
+  const okCount = state.diag.filter(d=>d.ok).length;
+  el.innerHTML = "<div style=\"color:#DDE7F2;margin-bottom:6px\">"
+    + okCount + " of " + state.diag.length + " sources reachable</div>"
+    + state.diag.map(d=>
+        '<div style="margin-bottom:6px"><span style="color:'
+        + (d.ok ? "#3FA796" : "#D97C6A") + '">' + (d.ok ? "OK  " : "FAIL") + '</span> '
+        + esc(d.url.replace(/^https?:\/\//,"").slice(0,58))
+        + '<br><span style="opacity:.65">' + esc(d.detail) + '</span></div>').join("");
+}
+
 function renderThresholds(){
   $("thr").innerHTML = THRESHOLDS.map(t=>
     '<button data-t="'+t+'" aria-pressed="'+(t===state.threshold)+'">'+t+'%</button>').join("");
@@ -933,6 +958,7 @@ async function refresh(){
   $("btnRef").textContent = "Reading…";
   $("btnRef").disabled = true;
   state.days = schoolDays();
+  state.diag = [];
   render();
   startEta();
 
@@ -969,6 +995,12 @@ $("btnSet").onclick = ()=>{
 };
 $("btnRef").onclick = refresh;
 $("btnLoc").onclick = ()=>useLocation(false);
+$("btnDiag").onclick = ()=>{
+  const d = $("diag");
+  d.hidden = !d.hidden;
+  $("btnDiag").textContent = d.hidden ? "Show source status" : "Hide source status";
+  renderDiag();
+};
 refresh();
 if (!hadSaved) useLocation(true);   // first visit: ask once, fall back to Quezon City
 
