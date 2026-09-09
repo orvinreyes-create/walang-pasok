@@ -689,23 +689,12 @@ async function roundupDocs(){
          + mon + "-" + day + "-" + year + "/";
   });
   const rapplerTexts = await pool(rapplerUrls, 2, (u,i)=>fetchText(u, {priority: i===0}));
+  /* today first so the early-exit check below sees it */
   rapplerTexts.forEach((t,i)=> accept(t, rapplerUrls[i], "Rappler"));
 
-  /* Evergreen index pages, one per outlet. Each lists that outlet's running
-     "walang pasok" stories; we take the entries whose HEADLINE names today or
-     tomorrow, then let detectDay validate against the article body. Matching on
-     the headline rather than the URL path is the fix that matters: GMA's hub
-     returned 24 story links and none carried "walangpasok" in the path. */
-  const INDEXES = [
-    {name:"GMA News", url:"https://www.gmanetwork.com/news/archives/serbisyopubliko-walangpasok/"},
-    {name:"Philstar", url:"https://www.philstar.com/tags/walang-pasok"},
-    {name:"Inquirer", url:"https://newsinfo.inquirer.net/tag/walang-pasok"}
-  ];
-
-  /* Headline date forms the outlets actually use: "September 9", "Sept. 9",
-     "Sept 9". */
-  /* Philippine newsroom style, which is NOT a plain 3-letter truncation:
-     Sept. not Sep., June and July never abbreviated. */
+  /* Tiered, with early exit. Rappler alone answered today in 2 fetches; the
+     other outlets exist for when it hasn't published or is missing NCR. Fetching
+     all of them every time cost ~130kb and most of the wait for nothing. */
   const ABBR = {January:"Jan", February:"Feb", March:"March", April:"April",
                 May:"May", June:"June", July:"July", August:"Aug",
                 September:"Sept", October:"Oct", November:"Nov", December:"Dec"};
@@ -722,26 +711,50 @@ async function roundupDocs(){
   }
   const wanted = [].concat(dateTokens(0), dateTokens(1));
 
-  const idxTexts = await pool(INDEXES, 2, s=>fetchText(s.url));
+  /* Have we already got today covered? If so, stop. */
+  function haveToday(){
+    return docs.some(d => d.dayIdx === 0 && Object.keys(matchCities(d.text)).length > 0);
+  }
 
-  const candidates = [];
-  INDEXES.forEach((s,i)=>{
-    const t = idxTexts[i];
-    if (!t) return;
-    /* r.jina.ai renders pages as markdown, so headlines arrive as [title](url). */
+  const INDEXES = [
+    {name:"GMA News", url:"https://www.gmanetwork.com/news/archives/serbisyopubliko-walangpasok/"},
+    {name:"Philstar", url:"https://www.philstar.com/tags/walang-pasok"}
+    /* Inquirer's tag page proxies as a 3kb JS shell with zero links — dropped. */
+  ];
+
+  /* Article links only: an image URL matched the link pattern last run and
+     burned three proxy attempts on a thumbnail. */
+  const ARTICLE_OK = u => !/\.(jpg|jpeg|png|gif|webp|svg|mp4|pdf)(\?|$)/i.test(u)
+                       && !/^https?:\/\/media\./i.test(u);
+
+  for (const s of INDEXES){
+    if (haveToday()) {
+      state.diag.push({url:s.name + " index", ok:true, detail:"skipped — today already covered"});
+      continue;
+    }
+    const t = await fetchText(s.url);
+    if (!t) continue;
     const links = [...t.matchAll(/\[([^\]]{10,200})\]\((https?:\/\/[^)\s]+)\)/g)];
-    const hits = links.filter(m => WP_RE.test(m[1])
+    const hits = links.filter(m => ARTICLE_OK(m[2]) && WP_RE.test(m[1])
                              && wanted.some(w => m[1].indexOf(w) >= 0));
-    state.diag.push({url: s.name + " index", ok: hits.length > 0,
-                     detail: links.length + " links, " + hits.length
-                             + " headline(s) naming today/tomorrow"});
-    hits.slice(0,2).forEach(m => candidates.push({name:s.name, url:m[2]}));
-  });
-
-  const seenU = new Set();
-  const uniq = candidates.filter(c => !seenU.has(c.url) && seenU.add(c.url)).slice(0,4);
-  const artTexts = await pool(uniq, 2, c=>fetchText(c.url));
-  artTexts.forEach((t,i)=> accept(t, uniq[i].url, uniq[i].name));
+    /* Some indexes carry the date in the slug but not the anchor text. */
+    const slugHits = links.filter(m => ARTICLE_OK(m[2])
+                             && /walang-?pasok|class-suspensions/i.test(m[2])
+                             && wanted.some(w => m[2].toLowerCase()
+                                  .indexOf(w.toLowerCase().replace(/\.\s*/,"-").replace(/\s+/g,"-")) >= 0));
+    const all = hits.concat(slugHits);
+    const seenU = new Set();
+    const uniq = all.filter(m => !seenU.has(m[2]) && seenU.add(m[2])).slice(0,2);
+    state.diag.push({url:s.name + " index", ok:uniq.length > 0,
+                     detail: links.length + " links, " + uniq.length
+                             + " article(s) naming today/tomorrow"
+                             + (hits.length ? "" : slugHits.length ? " (matched by slug)" : "")});
+    for (const m of uniq){
+      const at = await fetchText(m[2]);
+      accept(at, m[2], s.name);
+      if (haveToday()) break;
+    }
+  }
 
   state.sources = tried;
   state.stale = stale;
@@ -864,7 +877,7 @@ async function loadAnnouncements(){
 
   /* Phase 1: newsroom roundups. Committed and rendered immediately so a slow
      city-site sweep never delays or hides what we already know. */
-  state.phase = "news roundups"; state.total = 9; state.done = 0;
+  state.phase = "news roundups"; state.total = 4; state.done = 0;
   const docs = await roundupDocs();
   docs.forEach(d=>{
     const hits = matchCities(d.text);           // d.dayIdx is already validated
