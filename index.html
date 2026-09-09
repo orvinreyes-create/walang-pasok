@@ -232,7 +232,7 @@ const band = p => BANDS.find(b => p < b.max) || BANDS[3];
 const THRESHOLDS = [40,50,60,70];
 
 let state = { city:"QZN", threshold:60, dayIdx:0, days:[], scores:{},
-              conf:{}, anns:[], sys:"", locMsg:"", sources:[], stale:[], lguOk:[], lguFail:[], diag:[], feeds:[], feedsRaw:"", cseKey:"", cseId:"", cseCache:null, phase:"", done:0, total:0, checked:null, loading:false, loadStart:0, estMs:14000 };
+              conf:{}, anns:[], sys:"", locMsg:"", sources:[], stale:[], lguOk:[], lguFail:[], diag:[], manual:false, feeds:[], feedsRaw:"", cseKey:"", cseId:"", cseCache:null, phase:"", done:0, total:0, checked:null, loading:false, loadStart:0, estMs:14000 };
 
 /* ================= weather icons ================= */
 /* chosen from peak hourly + daily total, so the glyph agrees with the number */
@@ -394,7 +394,7 @@ const TEXT_PROXIES = [
   u => "https://corsproxy.io/?" + encodeURIComponent(u)
 ];
 
-const FETCH_TIMEOUT = 7000;
+const FETCH_TIMEOUT = 15000;
 const PROXY_NAMES = ["r.jina.ai", "allorigins", "corsproxy"];
 
 async function fetchOnce(u){
@@ -417,16 +417,34 @@ async function fetchOnce(u){
 /* Every attempt is recorded so failures can be read off the screen instead of
    guessed at. Shown under Settings > Source status. */
 async function fetchText(url, opts){
-  const bucket = Math.floor(Date.now() / 60000);
-  const fresh = url + (url.indexOf("?") === -1 ? "?" : "&") + "_=" + bucket;
+  /* The cache-buster was forcing r.jina.ai to re-crawl a heavy page on every
+     call, which is what times out — the pages that fail are the big ones, and
+     they used to work before this was added. Ask for a fresh crawl only on a
+     manual Refresh; otherwise let the proxy serve its own recent copy. */
+  const target = state.manual
+    ? url + (url.indexOf("?") === -1 ? "?" : "&") + "_=" + Math.floor(Date.now()/60000)
+    : url;
+  const proxies = (opts && opts.single) ? TEXT_PROXIES.slice(0,1) : TEXT_PROXIES;
   const tries = [];
-  for (let i = 0; i < TEXT_PROXIES.length; i++){
-    const r = await fetchOnce(TEXT_PROXIES[i](fresh));
+  for (let i = 0; i < proxies.length; i++){
+    const r = await fetchOnce(proxies[i](target));
     tries.push(PROXY_NAMES[i] + ": " + r.why);
     if (r.text){
       state.diag.push({url, ok:true, detail:tries.join(" | ")});
       state.done++;
       return r.text;
+    }
+  }
+  /* One retry on the first proxy: these timeouts are transient, and today's
+     list is worth a second attempt. */
+  if (opts && opts.priority){
+    await new Promise(r=>setTimeout(r, 900));
+    const r2 = await fetchOnce(TEXT_PROXIES[0](url));   // no buster on the retry
+    tries.push("retry " + PROXY_NAMES[0] + ": " + r2.why);
+    if (r2.text){
+      state.diag.push({url, ok:true, detail:tries.join(" | ")});
+      state.done++;
+      return r2.text;
     }
   }
   state.diag.push({url, ok:false, detail:tries.join(" | ")});
@@ -635,7 +653,7 @@ async function lguDocs(){
   /* Four at a time, one proxy each: fast enough, and stays under the rate limits
      that made an all-at-once burst fail for every source including the roundups. */
   const results = await pool(LGU_SOURCES, 2, async s=>{
-    const t = await fetchText(s.url);
+    const t = await fetchText(s.url, {priority:true});
     return {s, t};
   });
 
@@ -676,7 +694,7 @@ async function roundupDocs(){
     return "https://www.rappler.com/philippines/class-suspensions-walang-pasok-"
          + mon + "-" + day + "-" + year + "/";
   });
-  const rapplerTexts = await pool(rapplerUrls, 3, u=>fetchText(u));
+  const rapplerTexts = await pool(rapplerUrls, 2, (u,i)=>fetchText(u, {priority: i===0}));
   rapplerTexts.forEach((t,i)=> accept(t, rapplerUrls[i], "Rappler"));
 
   const hub = await fetchText("https://www.gmanetwork.com/news/tracking/walang_pasok/");
@@ -685,6 +703,19 @@ async function roundupDocs(){
        unrelated articles (nation/, regions/) and never the roundup itself. */
     const all = hub.match(/https?:\/\/www\.gmanetwork\.com\/news\/[^\s")\]]*\/story\/?/g) || [];
     const m = all.filter(u => /walangpasok|serbisyopubliko/i.test(u));
+    state.diag.push({url:"GMA hub link extraction", ok:m.length>0,
+                     detail: all.length + " story links found, " + m.length
+                             + " matched walangpasok/serbisyopubliko"});
+    if (!m.length && all.length === 0){
+      /* The hub sometimes proxies as a nav-only shell. Fall back to the
+         section index, which lists the same stories. */
+      const alt = await fetchText("https://www.gmanetwork.com/news/serbisyopubliko/walangpasok/");
+      if (alt){
+        const m2 = (alt.match(/https?:\/\/www\.gmanetwork\.com\/news\/[^\s")\]]*\/story\/?/g) || [])
+                   .filter(u => /walangpasok|serbisyopubliko/i.test(u));
+        m.push.apply(m, m2);
+      }
+    }
     const urls = [...new Set(m)].slice(0,3);
     const texts = await pool(urls, 3, u=>fetchText(u));
     texts.forEach((t,i)=>{
@@ -1121,6 +1152,7 @@ async function refresh(){
     }
     state.checked = new Date();
   } finally {
+    state.manual = false;
     state.phase = "";
     stopEta();
     recordDuration(Date.now() - state.loadStart);
@@ -1156,7 +1188,7 @@ $("btnSet").onclick = ()=>{
   const s=$("settings"); s.hidden=!s.hidden;
   $("btnSet").setAttribute("aria-pressed", !s.hidden);
 };
-$("btnRef").onclick = refresh;
+$("btnRef").onclick = ()=>{ state.manual = true; refresh(); };
 $("btnLoc").onclick = ()=>useLocation(false);
 $("btnDiag").onclick = ()=>{
   const d = $("diag");
