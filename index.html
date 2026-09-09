@@ -46,6 +46,14 @@
   .hero-wp{font-family:'Archivo Narrow',sans-serif;font-size:36px;font-weight:700;line-height:.95;letter-spacing:-.01em;white-space:nowrap}
   .hero-sys{background:var(--panel);padding:11px 18px;font-size:13px;color:#AFC1D6;line-height:1.5}
   .icon{width:46px;height:46px;flex-shrink:0}
+  .reading{display:flex;align-items:center;gap:8px;margin-left:auto;
+           font-size:12px;font-weight:600;opacity:.85}
+  .spin{width:18px;height:18px;border-radius:50%;flex-shrink:0;
+        border:2.5px solid rgba(255,255,255,.32);border-top-color:currentColor;
+        animation:spin .8s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .stale-num{opacity:.55}
+  @media (prefers-reduced-motion:reduce){ .spin{animation:none;border-top-color:rgba(255,255,255,.8)} }
   .days{display:flex;gap:6px;margin-top:14px}
   .day{flex:1;padding:9px 2px 8px;border-radius:10px;background:var(--panel);
        border:1px solid var(--edge);color:#DDE7F2;cursor:pointer;text-align:center}
@@ -190,7 +198,7 @@ const band = p => BANDS.find(b => p < b.max) || BANDS[3];
 const THRESHOLDS = [40,50,60,70];
 
 let state = { city:"QZN", threshold:60, dayIdx:0, days:[], scores:{},
-              conf:{}, anns:[], sys:"", locMsg:"", sources:[], stale:[], checked:null };
+              conf:{}, anns:[], sys:"", locMsg:"", sources:[], stale:[], checked:null, loading:false };
 
 /* ================= weather icons ================= */
 /* chosen from peak hourly + daily total, so the glyph agrees with the number */
@@ -340,17 +348,34 @@ const TEXT_PROXIES = [
   u => "https://corsproxy.io/?" + encodeURIComponent(u)
 ];
 
+const FETCH_TIMEOUT = 9000;
+
+async function fetchOnce(u){
+  /* Without an abort, one unresponsive proxy hangs the whole refresh forever. */
+  const ac = new AbortController();
+  const timer = setTimeout(()=>ac.abort(), FETCH_TIMEOUT);
+  try{
+    const r = await fetch(u, {cache:"no-store", signal:ac.signal});
+    if (!r.ok) return null;
+    const t = await r.text();
+    return (t && t.length > 500) ? t : null;
+  }catch(e){
+    return null;
+  }finally{
+    clearTimeout(timer);
+  }
+}
+
 async function fetchText(url){
-  /* Proxies cache hard, and a cached copy from 20 minutes ago is exactly what
-     hides a suspension announced 5 minutes ago. Bust the cache every call. */
-  const fresh = url + (url.indexOf("?") === -1 ? "?" : "&") + "_=" + Date.now();
+  /* Bucket the cache-buster to the minute. A per-millisecond value made every
+     request a guaranteed proxy miss, which tripped their rate limits and left
+     the refresh hanging. One miss a minute is fresh enough and stays inside
+     what the free proxies tolerate. */
+  const bucket = Math.floor(Date.now() / 60000);
+  const fresh = url + (url.indexOf("?") === -1 ? "?" : "&") + "_=" + bucket;
   for (const p of TEXT_PROXIES){
-    try{
-      const r = await fetch(p(fresh), {cache:"no-store"});
-      if (!r.ok) continue;
-      const t = await r.text();
-      if (t && t.length > 500) return t;
-    }catch(e){}
+    const t = await fetchOnce(p(fresh));
+    if (t) return t;
   }
   return null;
 }
@@ -393,12 +418,12 @@ async function roundupDocs(){
 
   /* A document is only usable if the date printed in the article itself falls
      inside our five school days. Yesterday's roundup is discarded, never
-     assumed to be today's — that is how a stale Sep 8 list became a Sep 9 WP. */
+     assumed to be today's. */
   function accept(text, url, name){
+    if (!text) return false;
     const idx = detectDay(text);
     if (idx < 0){
-      const d = articleDate(text);
-      stale.push({name, url, date: d || "undated"});
+      stale.push({name, url, date: articleDate(text) || "undated"});
       return false;
     }
     docs.push({text, url, name, dayIdx: idx});
@@ -406,26 +431,25 @@ async function roundupDocs(){
     return true;
   }
 
-  for (const off of [0,1,2]){
+  /* All three Rappler days at once — sequentially this was three timeouts deep. */
+  const rapplerUrls = [0,1,2].map(off=>{
     const {mon,day,year} = daySlug(off);
-    const url = "https://www.rappler.com/philippines/class-suspensions-walang-pasok-"
-              + mon + "-" + day + "-" + year + "/";
-    const t = await fetchText(url);
-    if (t) accept(t, url, "Rappler");
-  }
+    return "https://www.rappler.com/philippines/class-suspensions-walang-pasok-"
+         + mon + "-" + day + "-" + year + "/";
+  });
+  const rapplerTexts = await Promise.all(rapplerUrls.map(u=>fetchText(u)));
+  rapplerTexts.forEach((t,i)=> accept(t, rapplerUrls[i], "Rappler"));
 
   const hub = await fetchText("https://www.gmanetwork.com/news/tracking/walang_pasok/");
   if (hub){
     const m = hub.match(/https?:\/\/www\.gmanetwork\.com\/news\/[^\s")\]]*\/story\/?/g) || [];
-    let taken = 0;
-    for (const u of [...new Set(m)].slice(0,5)){
-      const t = await fetchText(u);
-      if (t && /class suspension|walang pasok|suspendido/i.test(t)){
-        if (accept(t, u, "GMA News")) taken++;
-        if (taken >= 2) break;
-      }
-    }
+    const urls = [...new Set(m)].slice(0,3);
+    const texts = await Promise.all(urls.map(u=>fetchText(u)));
+    texts.forEach((t,i)=>{
+      if (t && /class suspension|walang pasok|suspendido/i.test(t)) accept(t, urls[i], "GMA News");
+    });
   }
+
   state.sources = tried;
   state.stale = stale;
   return docs;
@@ -572,18 +596,27 @@ function renderHero(){
   const b = band(p);
   top.style.background = off ? "var(--off)" : b.bg;
   top.style.color = off ? "#fff" : b.fg;
+  const dim = state.loading ? ' stale-num' : '';
   $("heroBody").innerHTML =
       '<div style="display:flex;align-items:center;gap:12px;margin-top:6px">'
-    +   '<div style="display:flex;align-items:flex-end;gap:8px">'
+    +   '<div style="display:flex;align-items:flex-end;gap:8px" class="' + dim.trim() + '">'
     +     (off ? '<span class="hero-wp">Walang Pasok</span>' : '<span class="hero-num">' + p + '</span>')
     +     (off ? "" : '<span style="font-size:22px;font-weight:600;padding-bottom:6px">%</span>')
     +   '</div>'
-    +   '<span role="img" aria-label="' + ICON_LABEL[s.ico] + '">' + icon(s.ico) + '</span>'
+    +   '<span role="img" aria-label="' + ICON_LABEL[s.ico] + '"' + (state.loading ? ' class="stale-num"' : '')
+    +     '>' + icon(s.ico) + '</span>'
+    +   (state.loading
+         ? '<span class="reading" role="status" aria-live="polite">'
+           + '<span class="spin"></span>Reading…</span>'
+         : "")
     + '</div>'
     + '<div style="font-size:15px;font-weight:600;margin-top:8px">'
     +   (off ? "Suspension announced — verify with your school" : b.label) + '</div>'
-    + '<div style="font-size:13px;margin-top:6px;opacity:.9">' + ICON_LABEL[s.ico] + ' · '
-    +   s.total + ' mm expected, peaking near ' + s.peak + ' mm in an hour.</div>';
+    + '<div style="font-size:13px;margin-top:6px;opacity:.9">'
+    +   (state.loading
+          ? 'Checking the latest forecast and announcements — figures below may change.'
+          : ICON_LABEL[s.ico] + ' · ' + s.total + ' mm expected, peaking near '
+            + s.peak + ' mm in an hour.') + '</div>';
   $("heroSys").hidden = !state.sys;
   $("heroSys").textContent = state.sys;
 }
@@ -720,16 +753,29 @@ function renderThresholds(){
 }
 
 async function refresh(){
+  if (state.loading) return;          // overlapping refreshes left the button stuck
+  state.loading = true;
   $("btnRef").textContent = "Reading…";
+  $("btnRef").disabled = true;
   state.days = schoolDays();
-  try{ await loadWeather(); }
-  catch(e){ $("heroBody").textContent = "Could not reach the weather service. Check your connection and refresh."; }
   render();
-  try{ await loadAnnouncements(); }
-  catch(e){ state.anns=[]; state.conf={}; }
-  state.checked = new Date();
-  render();
-  $("btnRef").textContent = "Refresh";
+
+  try{
+    try{ await loadWeather(); }
+    catch(e){
+      if (!Object.keys(state.scores).length)
+        $("heroBody").textContent = "Could not reach the weather service. Check your connection and refresh.";
+    }
+    render();
+    try{ await loadAnnouncements(); }
+    catch(e){ state.anns=[]; state.conf={}; }
+    state.checked = new Date();
+  } finally {
+    state.loading = false;            // always clears, even if something throws
+    $("btnRef").textContent = "Refresh";
+    $("btnRef").disabled = false;
+    render();
+  }
 }
 
 const hadSaved = loadSettings();
