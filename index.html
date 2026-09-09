@@ -378,18 +378,32 @@ async function fetchOnce(u){
   }
 }
 
-async function fetchText(url){
-  /* Bucket the cache-buster to the minute. A per-millisecond value made every
-     request a guaranteed proxy miss, which tripped their rate limits and left
-     the refresh hanging. One miss a minute is fresh enough and stays inside
-     what the free proxies tolerate. */
+async function fetchText(url, opts){
+  /* Bucket the cache-buster to the minute so proxies can still serve a recent
+     copy — a per-millisecond value guaranteed a miss on every request. */
   const bucket = Math.floor(Date.now() / 60000);
   const fresh = url + (url.indexOf("?") === -1 ? "?" : "&") + "_=" + bucket;
-  for (const p of TEXT_PROXIES){
+  const proxies = (opts && opts.single) ? TEXT_PROXIES.slice(0,1) : TEXT_PROXIES;
+  for (const p of proxies){
     const t = await fetchOnce(p(fresh));
     if (t) return t;
   }
   return null;
+}
+
+/* Free proxies rate-limit on bursts. Seventeen city sites fired at once meant
+   every request failed, including the roundups. Cap concurrency instead. */
+async function pool(items, limit, fn){
+  const out = new Array(items.length);
+  let next = 0;
+  async function worker(){
+    while (next < items.length){
+      const i = next++;
+      out[i] = await fn(items[i], i);
+    }
+  }
+  await Promise.all(Array.from({length: Math.min(limit, items.length)}, worker));
+  return out;
 }
 
 function daySlug(offset){
@@ -491,11 +505,12 @@ function scanLguPage(text){
 }
 
 async function lguDocs(){
-  /* All cities in parallel — sequentially this would be seventeen timeouts deep. */
-  const results = await Promise.all(LGU_SOURCES.map(async s=>{
-    const t = await fetchText(s.url);
+  /* Four at a time, one proxy each: fast enough, and stays under the rate limits
+     that made an all-at-once burst fail for every source including the roundups. */
+  const results = await pool(LGU_SOURCES, 4, async s=>{
+    const t = await fetchText(s.url, {single:true});
     return {s, t};
-  }));
+  });
 
   const out = [];
   state.lguOk = []; state.lguFail = [];
@@ -534,14 +549,14 @@ async function roundupDocs(){
     return "https://www.rappler.com/philippines/class-suspensions-walang-pasok-"
          + mon + "-" + day + "-" + year + "/";
   });
-  const rapplerTexts = await Promise.all(rapplerUrls.map(u=>fetchText(u)));
+  const rapplerTexts = await pool(rapplerUrls, 3, u=>fetchText(u));
   rapplerTexts.forEach((t,i)=> accept(t, rapplerUrls[i], "Rappler"));
 
   const hub = await fetchText("https://www.gmanetwork.com/news/tracking/walang_pasok/");
   if (hub){
     const m = hub.match(/https?:\/\/www\.gmanetwork\.com\/news\/[^\s")\]]*\/story\/?/g) || [];
     const urls = [...new Set(m)].slice(0,3);
-    const texts = await Promise.all(urls.map(u=>fetchText(u)));
+    const texts = await pool(urls, 3, u=>fetchText(u));
     texts.forEach((t,i)=>{
       if (t && /class suspension|walang pasok|suspendido/i.test(t)) accept(t, urls[i], "GMA News");
     });
@@ -643,30 +658,9 @@ function matchCities(text){
   return found;
 }
 
-async function loadAnnouncements(){
-  const docs = await roundupDocs();
+function commit(byDay){
   state.conf = {};
   state.anns = [];
-  const noRoundup = !docs.length;
-
-  const byDay = {};
-  docs.forEach(d=>{
-    const hits = matchCities(d.text);           // d.dayIdx is already validated
-    byDay[d.dayIdx] = byDay[d.dayIdx] || {};
-    Object.keys(hits).forEach(id=>{
-      if(!byDay[d.dayIdx][id]) byDay[d.dayIdx][id] = hits[id];
-    });
-  });
-
-  /* Direct LGU announcements are authoritative and are merged in first. */
-  let lgu = [];
-  try{ lgu = await lguDocs(); }catch(e){}
-  lgu.forEach(a=>{
-    byDay[a.dayIdx] = byDay[a.dayIdx] || {};
-    byDay[a.dayIdx][a.cityId] = {text:a.detail, link:a.url};
-    state.sources.push({name:a.name, url:a.url, dayIdx:a.dayIdx});
-  });
-
   Object.keys(byDay).forEach(idx=>{
     const i = +idx;
     state.conf[i] = {};
@@ -677,7 +671,35 @@ async function loadAnnouncements(){
     });
   });
   state.anns.sort((a,b)=> a.dayIdx - b.dayIdx || a.city.localeCompare(b.city));
-  if (noRoundup && !state.anns.length) throw new Error("no dated source in range");
+}
+
+async function loadAnnouncements(){
+  const byDay = {};
+
+  /* Phase 1: newsroom roundups. Committed and rendered immediately so a slow
+     city-site sweep never delays or hides what we already know. */
+  const docs = await roundupDocs();
+  docs.forEach(d=>{
+    const hits = matchCities(d.text);           // d.dayIdx is already validated
+    byDay[d.dayIdx] = byDay[d.dayIdx] || {};
+    Object.keys(hits).forEach(id=>{
+      if(!byDay[d.dayIdx][id]) byDay[d.dayIdx][id] = hits[id];
+    });
+  });
+  commit(byDay);
+  render();
+
+  /* Phase 2: the cities' own sites. Authoritative, so these overwrite. */
+  let lgu = [];
+  try{ lgu = await lguDocs(); }catch(e){}
+  lgu.forEach(a=>{
+    byDay[a.dayIdx] = byDay[a.dayIdx] || {};
+    byDay[a.dayIdx][a.cityId] = {text:a.detail, link:a.url};
+    state.sources.push({name:a.name, url:a.url, dayIdx:a.dayIdx});
+  });
+  commit(byDay);
+
+  if (!docs.length && !state.anns.length) throw new Error("no dated source in range");
 }
 
 const isOff = (cityId, dayIdx) => !!(state.conf[dayIdx] && state.conf[dayIdx][cityId]);
@@ -922,7 +944,11 @@ async function refresh(){
     }
     render();
     try{ await loadAnnouncements(); }
-    catch(e){ state.anns=[]; state.conf={}; }
+    catch(e){
+      /* Only clear if nothing at all was gathered — a late failure must not
+         throw away confirmations already merged in. */
+      if (!state.anns.length){ state.anns=[]; state.conf={}; }
+    }
     state.checked = new Date();
   } finally {
     stopEta();
