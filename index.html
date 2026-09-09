@@ -198,7 +198,7 @@ const band = p => BANDS.find(b => p < b.max) || BANDS[3];
 const THRESHOLDS = [40,50,60,70];
 
 let state = { city:"QZN", threshold:60, dayIdx:0, days:[], scores:{},
-              conf:{}, anns:[], sys:"", locMsg:"", sources:[], stale:[], checked:null, loading:false, loadStart:0, estMs:14000 };
+              conf:{}, anns:[], sys:"", locMsg:"", sources:[], stale:[], lguOk:[], lguFail:[], checked:null, loading:false, loadStart:0, estMs:14000 };
 
 /* ================= weather icons ================= */
 /* chosen from peak hourly + daily total, so the glyph agrees with the number */
@@ -426,39 +426,87 @@ function detectDay(text){
    from which recent story links can be pulled. We look at today AND the days
    ahead, because an evening announcement for tomorrow is the whole point. */
 /* ---- official LGU sources, read directly ----
-   Newsroom roundups are hand-curated and lag or omit LGU posts entirely.
-   Where a city publishes its own announcements on a fetchable website, read
-   that instead of waiting for a newsroom. QC's post URLs carry the covered
-   date in the slug, which makes them unambiguous. Facebook itself cannot be
-   read from a browser (no CORS, login-walled), but most LGUs mirror posts
-   to their .gov.ph site. */
+   Newsroom roundups are hand-curated and lag or omit LGU posts entirely, so
+   each city's own site is read as well. Detection is date-driven: a page only
+   confirms a suspension if it carries a "walang pasok" style announcement AND
+   a date inside our five-day window. Stale headlines still sitting on a
+   homepage are therefore harmless.
+
+   Facebook itself cannot be read from a browser (no CORS, login-walled). Cities
+   that post only to Facebook will stay dependent on the roundups; those sources
+   simply fail quietly and are reported under coverage. */
 const LGU_SOURCES = [
-  { id:"QZN", name:"Quezon City Government",
-    url:"https://quezoncity.gov.ph/news-and-media/announcements/",
-    // e.g. /walang-pasok-...-september-9-2026/
-    slug:/walang-pasok[a-z0-9\-]*?-(january|february|march|april|may|june|july|august|september|october|november|december)-(\d{1,2})-(\d{4})/gi }
+  {id:"QZN", name:"Quezon City",  url:"https://quezoncity.gov.ph/news-and-media/announcements/"},
+  {id:"MNL", name:"Manila",       url:"https://manila.gov.ph/"},
+  {id:"MAK", name:"Makati",       url:"https://makati.gov.ph/"},
+  {id:"PSG", name:"Pasig",        url:"https://www.pasigcity.gov.ph/"},
+  {id:"TAG", name:"Taguig",       url:"https://www.taguig.gov.ph/"},
+  {id:"MRK", name:"Marikina",     url:"https://marikina.gov.ph/"},
+  {id:"VAL", name:"Valenzuela",   url:"https://valenzuela.gov.ph/"},
+  {id:"CAL", name:"Caloocan",     url:"https://caloocancity.gov.ph/"},
+  {id:"MUN", name:"Muntinlupa",   url:"https://www.muntinlupacity.gov.ph/"},
+  {id:"NAV", name:"Navotas",      url:"https://navotas.gov.ph/"},
+  {id:"MAL", name:"Malabon",      url:"https://malabon.gov.ph/"},
+  {id:"MND", name:"Mandaluyong",  url:"https://mandaluyong.gov.ph/"},
+  {id:"SJN", name:"San Juan",     url:"https://sanjuancity.gov.ph/"},
+  {id:"PSY", name:"Pasay",        url:"https://pasay.gov.ph/"},
+  {id:"PAR", name:"Parañaque",    url:"https://paranaquecity.gov.ph/"},
+  {id:"LSP", name:"Las Piñas",    url:"https://laspinascity.gov.ph/"},
+  {id:"PAT", name:"Pateros",      url:"https://pateros.gov.ph/"}
 ];
 
-async function lguDocs(){
-  const out = [];
-  for (const s of LGU_SOURCES){
-    const t = await fetchText(s.url);
-    if (!t) continue;
-    const seen = new Set();
-    let m;
-    s.slug.lastIndex = 0;
-    while ((m = s.slug.exec(t)) !== null){
-      const key = m[3] + "-" + String(MONTHS.indexOf(m[1].toLowerCase())+1).padStart(2,"0")
-                + "-" + String(+m[2]).padStart(2,"0");
-      if (seen.has(key)) continue;
-      seen.add(key);
-      const idx = state.days.findIndex(d => d.key === key);
-      if (idx < 0) continue;                      // old post — ignored, never today
-      out.push({ cityId:s.id, dayIdx:idx, name:s.name, url:s.url,
-                 detail:"Face-to-face classes suspended, all levels — announced by "
-                        + s.name + "." });
-    }
+const WP_RE   = /walang[\s\-]?pasok|suspension of (face-to-face )?classes|classes suspended|suspendido ang (face-to-face )?class/i;
+const SLUG_RE = /walang-pasok[a-z0-9\-]*?-(january|february|march|april|may|june|july|august|september|october|november|december)-(\d{1,2})-(\d{4})/gi;
+const DATE_RE = /(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2}),?\s+(\d{4})/i;
+
+function keyFrom(mon, day, year){
+  return year + "-" + String(MONTHS.indexOf(String(mon).toLowerCase())+1).padStart(2,"0")
+       + "-" + String(+day).padStart(2,"0");
+}
+
+/* Returns the day indexes this page confirms a suspension for. */
+function scanLguPage(text){
+  const hits = new Set();
+
+  // 1. Post URLs that carry the covered date in the slug (QC does this).
+  SLUG_RE.lastIndex = 0;
+  let m;
+  while ((m = SLUG_RE.exec(text)) !== null){
+    const i = state.days.findIndex(d => d.key === keyFrom(m[1], m[2], m[3]));
+    if (i >= 0) hits.add(i);
   }
+
+  // 2. Headline text: a walang-pasok line carrying an in-window date.
+  text.split(/\r?\n/).forEach(raw=>{
+    const line = raw.replace(/\s+/g," ").trim();
+    if (!line || line.length > 300) return;
+    if (!WP_RE.test(line)) return;
+    const d = line.match(DATE_RE);
+    if (!d) return;
+    const i = state.days.findIndex(k => k.key === keyFrom(d[1], d[2], d[3]));
+    if (i >= 0) hits.add(i);
+  });
+
+  return [...hits];
+}
+
+async function lguDocs(){
+  /* All cities in parallel — sequentially this would be seventeen timeouts deep. */
+  const results = await Promise.all(LGU_SOURCES.map(async s=>{
+    const t = await fetchText(s.url);
+    return {s, t};
+  }));
+
+  const out = [];
+  state.lguOk = []; state.lguFail = [];
+  results.forEach(({s,t})=>{
+    if (!t){ state.lguFail.push(s.name); return; }
+    state.lguOk.push(s.name);
+    scanLguPage(t).forEach(dayIdx=>{
+      out.push({cityId:s.id, dayIdx, name:s.name + " (official site)", url:s.url,
+                detail:"Class suspension announced on the city's official site."});
+    });
+  });
   return out;
 }
 
@@ -662,7 +710,13 @@ function renderHero(){
   const top = $("heroTop");
   if (p == null){
     top.style.background="#1C2838"; top.style.color="#fff";
-    $("heroBody").textContent = "No reading yet. Tap Refresh to pull the forecast.";
+    $("heroBody").innerHTML = state.loading
+      ? '<div class="reading" style="margin-left:0">'
+        + '<span class="spin"></span>'
+        + '<span><span style="display:block">Reading…</span>'
+        + '<span id="eta" style="display:block;font-weight:400;opacity:.75;font-size:11px">'
+        + etaText() + '</span></span></div>'
+      : "No reading yet. Tap Refresh to pull the forecast.";
     return;
   }
   const b = band(p);
@@ -679,7 +733,10 @@ function renderHero(){
     +     '>' + icon(s.ico) + '</span>'
     +   (state.loading
          ? '<span class="reading" role="status" aria-live="polite">'
-           + '<span class="spin"></span>Reading…</span>'
+           + '<span class="spin"></span>'
+           + '<span><span style="display:block">Reading…</span>'
+           + '<span id="eta" style="display:block;font-weight:400;opacity:.75;font-size:11px">'
+           + etaText() + '</span></span></span>'
          : "")
     + '</div>'
     + '<div style="font-size:15px;font-weight:600;margin-top:8px">'
@@ -763,6 +820,13 @@ function renderAnns(){
       + [...new Set(state.sources.map(s=>s.name))].join(" and ")
       + ". Lists confirmed for: " + covered.join("; ") + ".</div>"
     : "";
+  const cover = (state.lguOk && (state.lguOk.length || state.lguFail.length))
+    ? '<div style="font-size:12px;color:var(--mute);margin-top:6px">Official city sites read: '
+      + (state.lguOk.length ? state.lguOk.join(", ") : "none")
+      + (state.lguFail.length
+          ? ". Not reachable (these rely on the news roundups): " + state.lguFail.join(", ")
+          : "") + ".</div>"
+    : "";
   const skipped = (state.stale && state.stale.length)
     ? '<div style="font-size:12px;color:var(--mute);margin-top:6px">Ignored '
       + state.stale.length + " out-of-date "
@@ -776,7 +840,7 @@ function renderAnns(){
       + (state.sources.length
           ? "No Metro Manila city appears in the roundups published for these days yet. Most are posted between 4:30 and 6:00am, and evening announcements for the next day show up here too."
           : "No current roundup was reachable. Older lists are deliberately ignored, so nothing is shown rather than something stale. Check GMA or Rappler directly, then refresh.")
-      + '</div>' + src + skipped;
+      + '</div>' + src + cover + skipped;
     return;
   }
 
@@ -795,7 +859,7 @@ function renderAnns(){
               + '" target="_blank" rel="noopener">Official post</a></div>' : "")
           + '</div>';
   });
-  el.innerHTML = html + src + skipped;
+  el.innerHTML = html + src + cover + skipped;
 }
 
 function renderRank(){
