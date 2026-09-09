@@ -232,7 +232,7 @@ const band = p => BANDS.find(b => p < b.max) || BANDS[3];
 const THRESHOLDS = [40,50,60,70];
 
 let state = { city:"QZN", threshold:60, dayIdx:0, days:[], scores:{},
-              conf:{}, anns:[], sys:"", locMsg:"", sources:[], stale:[], lguOk:[], lguFail:[], diag:[], manual:false, feeds:[], feedsRaw:"", cseKey:"", cseId:"", cseCache:null, phase:"", done:0, total:0, checked:null, loading:false, loadStart:0, estMs:14000 };
+              conf:{}, anns:[], sys:"", locMsg:"", sources:[], stale:[], lguOk:[], lguFail:[], diag:[], manual:false, retried:false, feeds:[], feedsRaw:"", cseKey:"", cseId:"", cseCache:null, phase:"", done:0, total:0, checked:null, loading:false, loadStart:0, estMs:14000 };
 
 /* ================= weather icons ================= */
 /* chosen from peak hourly + daily total, so the glyph agrees with the number */
@@ -417,13 +417,14 @@ async function fetchOnce(u){
 /* Every attempt is recorded so failures can be read off the screen instead of
    guessed at. Shown under Settings > Source status. */
 async function fetchText(url, opts){
-  /* The cache-buster was forcing r.jina.ai to re-crawl a heavy page on every
-     call, which is what times out — the pages that fail are the big ones, and
-     they used to work before this was added. Ask for a fresh crawl only on a
-     manual Refresh; otherwise let the proxy serve its own recent copy. */
-  const target = state.manual
-    ? url + (url.indexOf("?") === -1 ? "?" : "&") + "_=" + Math.floor(Date.now()/60000)
-    : url;
+  /* ALWAYS bust the proxy cache. These roundups are living documents — GMA
+     publishes at 9pm and keeps adding cities all night — so the proxy's cached
+     crawl is routinely an early version with the Metro Manila section missing
+     entirely. A stale copy that parses cleanly is the worst failure mode here:
+     it looks like a correct "no suspensions" answer. Five-minute buckets keep
+     re-crawls affordable without ever serving last night's page. */
+  const target = url + (url.indexOf("?") === -1 ? "?" : "&")
+               + "_=" + Math.floor(Date.now() / (5*60*1000));
   const proxies = (opts && opts.single) ? TEXT_PROXIES.slice(0,1) : TEXT_PROXIES;
   const tries = [];
   for (let i = 0; i < proxies.length; i++){
@@ -437,9 +438,10 @@ async function fetchText(url, opts){
   }
   /* One retry on the first proxy: these timeouts are transient, and today's
      list is worth a second attempt. */
-  if (opts && opts.priority){
+  if (opts && opts.priority && !state.retried){
+    state.retried = true;                 // one retry per refresh, not per URL
     await new Promise(r=>setTimeout(r, 900));
-    const r2 = await fetchOnce(TEXT_PROXIES[0](url));   // no buster on the retry
+    const r2 = await fetchOnce(TEXT_PROXIES[0](target));
     tries.push("retry " + PROXY_NAMES[0] + ": " + r2.why);
     if (r2.text){
       state.diag.push({url, ok:true, detail:tries.join(" | ")});
@@ -767,6 +769,11 @@ function cityRegexes(c){
    on the same line, the line is not a dateline, and the name carries genuine
    city context — either an explicit "City" form, or a bare name that opens the
    line as a list entry and is not followed by an institution word. */
+/* Restored: this was deleted by an earlier block replacement while matchCities
+   still referenced it, so every document threw a ReferenceError and every
+   roundup silently parsed to zero cities. */
+const SUSPEND_RE = /suspend|walang pasok|no (face-to-face|in-person)? ?classes|no afternoon|cancel|alternative (learning|delivery|modalit)|distance learning|shift to|all levels|face-to-face classes|in-person classes|public and private/i;
+
 const REGION_RE = /\b(metro manila|national capital region|NCR)\b/i;
 
 function matchCities(text){
@@ -843,6 +850,10 @@ async function loadAnnouncements(){
   const docs = await roundupDocs();
   docs.forEach(d=>{
     const hits = matchCities(d.text);           // d.dayIdx is already validated
+    state.diag.push({url: d.name + " parse (" + (state.days[d.dayIdx] || {}).key + ")",
+                     ok: Object.keys(hits).length > 0,
+                     detail: Object.keys(hits).length + " NCR cities matched"
+                             + (/metro manila/i.test(d.text) ? "" : " — no 'Metro Manila' section in fetched copy (stale crawl?)")});
     byDay[d.dayIdx] = byDay[d.dayIdx] || {};
     Object.keys(hits).forEach(id=>{
       if(!byDay[d.dayIdx][id]) byDay[d.dayIdx][id] = hits[id];
@@ -1134,6 +1145,7 @@ async function refresh(){
   $("btnRef").disabled = true;
   state.days = schoolDays();
   state.diag = [];
+  state.retried = false;
   render();
   startEta();
 
@@ -1200,7 +1212,10 @@ $("btnDiag").onclick = ()=>{
 
 function diagText(){
   const ok = state.diag.filter(d=>d.ok).length;
-  const when = state.checked ? state.checked.toISOString() : "(mid-refresh)";
+  const when = (state.loading
+      ? "STILL REFRESHING (" + state.phase + " " + state.done + "/" + state.total
+        + ") — some sources not tried yet"
+      : "complete, " + (state.checked ? state.checked.toISOString() : "never run"));
   return "Walang Pasok Watch — source status\n"
     + when + "\n"
     + ok + " of " + state.diag.length + " reachable\n\n"
