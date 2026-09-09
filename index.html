@@ -510,15 +510,7 @@ function detectDay(text){
    Facebook itself cannot be read from a browser (no CORS, login-walled). Cities
    that post only to Facebook will stay dependent on the roundups; those sources
    simply fail quietly and are reported under coverage. */
-const LGU_SOURCES = [
-  /* Deliberately short. The roundups plus QC's own site is the configuration
-     that worked. Adding sixteen more sites pushed each refresh to ~63 proxy
-     calls and rate-limited the one working proxy, which broke everything
-     including the roundups. Volume was the bug. */
-  {id:"QZN", name:"Quezon City", url:"https://quezoncity.gov.ph/news-and-media/announcements/"}
-];
-
-/* Every other city is covered by the news roundups, which do list all 17. */
+const LGU_SOURCES = [];   // roundups already list all 17 NCR cities
 const NO_SITE = [];
 
 /* ---- optional: official Facebook page search ----
@@ -699,31 +691,57 @@ async function roundupDocs(){
   const rapplerTexts = await pool(rapplerUrls, 2, (u,i)=>fetchText(u, {priority: i===0}));
   rapplerTexts.forEach((t,i)=> accept(t, rapplerUrls[i], "Rappler"));
 
-  const hub = await fetchText("https://www.gmanetwork.com/news/tracking/walang_pasok/");
-  if (hub){
-    /* The hub page links every top story. Without this filter it fetched
-       unrelated articles (nation/, regions/) and never the roundup itself. */
-    const all = hub.match(/https?:\/\/www\.gmanetwork\.com\/news\/[^\s")\]]*\/story\/?/g) || [];
-    const m = all.filter(u => /walangpasok|serbisyopubliko/i.test(u));
-    state.diag.push({url:"GMA hub link extraction", ok:m.length>0,
-                     detail: all.length + " story links found, " + m.length
-                             + " matched walangpasok/serbisyopubliko"});
-    if (!m.length && all.length === 0){
-      /* The hub sometimes proxies as a nav-only shell. Fall back to the
-         section index, which lists the same stories. */
-      const alt = await fetchText("https://www.gmanetwork.com/news/serbisyopubliko/walangpasok/");
-      if (alt){
-        const m2 = (alt.match(/https?:\/\/www\.gmanetwork\.com\/news\/[^\s")\]]*\/story\/?/g) || [])
-                   .filter(u => /walangpasok|serbisyopubliko/i.test(u));
-        m.push.apply(m, m2);
-      }
-    }
-    const urls = [...new Set(m)].slice(0,3);
-    const texts = await pool(urls, 3, u=>fetchText(u));
-    texts.forEach((t,i)=>{
-      if (t && /class suspension|walang pasok|suspendido/i.test(t)) accept(t, urls[i], "GMA News");
-    });
+  /* Evergreen index pages, one per outlet. Each lists that outlet's running
+     "walang pasok" stories; we take the entries whose HEADLINE names today or
+     tomorrow, then let detectDay validate against the article body. Matching on
+     the headline rather than the URL path is the fix that matters: GMA's hub
+     returned 24 story links and none carried "walangpasok" in the path. */
+  const INDEXES = [
+    {name:"GMA News", url:"https://www.gmanetwork.com/news/archives/serbisyopubliko-walangpasok/"},
+    {name:"Philstar", url:"https://www.philstar.com/tags/walang-pasok"},
+    {name:"Inquirer", url:"https://newsinfo.inquirer.net/tag/walang-pasok"}
+  ];
+
+  /* Headline date forms the outlets actually use: "September 9", "Sept. 9",
+     "Sept 9". */
+  /* Philippine newsroom style, which is NOT a plain 3-letter truncation:
+     Sept. not Sep., June and July never abbreviated. */
+  const ABBR = {January:"Jan", February:"Feb", March:"March", April:"April",
+                May:"May", June:"June", July:"July", August:"Aug",
+                September:"Sept", October:"Oct", November:"Nov", December:"Dec"};
+  function dateTokens(i){
+    const d = state.days[i];
+    if (!d) return [];
+    const dt = new Date(d.key + "T00:00:00");
+    const full = dt.toLocaleDateString("en-US",{month:"long"});
+    const ab = ABBR[full] || full.slice(0,3);
+    const day = dt.getDate();
+    const out = [full + " " + day];
+    if (ab !== full) out.push(ab + ". " + day, ab + " " + day);
+    return out;
   }
+  const wanted = [].concat(dateTokens(0), dateTokens(1));
+
+  const idxTexts = await pool(INDEXES, 2, s=>fetchText(s.url));
+
+  const candidates = [];
+  INDEXES.forEach((s,i)=>{
+    const t = idxTexts[i];
+    if (!t) return;
+    /* r.jina.ai renders pages as markdown, so headlines arrive as [title](url). */
+    const links = [...t.matchAll(/\[([^\]]{10,200})\]\((https?:\/\/[^)\s]+)\)/g)];
+    const hits = links.filter(m => WP_RE.test(m[1])
+                             && wanted.some(w => m[1].indexOf(w) >= 0));
+    state.diag.push({url: s.name + " index", ok: hits.length > 0,
+                     detail: links.length + " links, " + hits.length
+                             + " headline(s) naming today/tomorrow"});
+    hits.slice(0,2).forEach(m => candidates.push({name:s.name, url:m[2]}));
+  });
+
+  const seenU = new Set();
+  const uniq = candidates.filter(c => !seenU.has(c.url) && seenU.add(c.url)).slice(0,4);
+  const artTexts = await pool(uniq, 2, c=>fetchText(c.url));
+  artTexts.forEach((t,i)=> accept(t, uniq[i].url, uniq[i].name));
 
   state.sources = tried;
   state.stale = stale;
@@ -846,7 +864,7 @@ async function loadAnnouncements(){
 
   /* Phase 1: newsroom roundups. Committed and rendered immediately so a slow
      city-site sweep never delays or hides what we already know. */
-  state.phase = "news roundups"; state.total = 5; state.done = 0;
+  state.phase = "news roundups"; state.total = 9; state.done = 0;
   const docs = await roundupDocs();
   docs.forEach(d=>{
     const hits = matchCities(d.text);           // d.dayIdx is already validated
