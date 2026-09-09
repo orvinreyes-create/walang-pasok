@@ -425,6 +425,43 @@ function detectDay(text){
 /* Rappler publishes at a fully predictable daily URL; GMA keeps a tracking hub
    from which recent story links can be pulled. We look at today AND the days
    ahead, because an evening announcement for tomorrow is the whole point. */
+/* ---- official LGU sources, read directly ----
+   Newsroom roundups are hand-curated and lag or omit LGU posts entirely.
+   Where a city publishes its own announcements on a fetchable website, read
+   that instead of waiting for a newsroom. QC's post URLs carry the covered
+   date in the slug, which makes them unambiguous. Facebook itself cannot be
+   read from a browser (no CORS, login-walled), but most LGUs mirror posts
+   to their .gov.ph site. */
+const LGU_SOURCES = [
+  { id:"QZN", name:"Quezon City Government",
+    url:"https://quezoncity.gov.ph/news-and-media/announcements/",
+    // e.g. /walang-pasok-...-september-9-2026/
+    slug:/walang-pasok[a-z0-9\-]*?-(january|february|march|april|may|june|july|august|september|october|november|december)-(\d{1,2})-(\d{4})/gi }
+];
+
+async function lguDocs(){
+  const out = [];
+  for (const s of LGU_SOURCES){
+    const t = await fetchText(s.url);
+    if (!t) continue;
+    const seen = new Set();
+    let m;
+    s.slug.lastIndex = 0;
+    while ((m = s.slug.exec(t)) !== null){
+      const key = m[3] + "-" + String(MONTHS.indexOf(m[1].toLowerCase())+1).padStart(2,"0")
+                + "-" + String(+m[2]).padStart(2,"0");
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const idx = state.days.findIndex(d => d.key === key);
+      if (idx < 0) continue;                      // old post — ignored, never today
+      out.push({ cityId:s.id, dayIdx:idx, name:s.name, url:s.url,
+                 detail:"Face-to-face classes suspended, all levels — announced by "
+                        + s.name + "." });
+    }
+  }
+  return out;
+}
+
 async function roundupDocs(){
   const docs = [], tried = [], stale = [];
 
@@ -562,7 +599,7 @@ async function loadAnnouncements(){
   const docs = await roundupDocs();
   state.conf = {};
   state.anns = [];
-  if (!docs.length) throw new Error("no dated source in range");
+  const noRoundup = !docs.length;
 
   const byDay = {};
   docs.forEach(d=>{
@@ -571,6 +608,15 @@ async function loadAnnouncements(){
     Object.keys(hits).forEach(id=>{
       if(!byDay[d.dayIdx][id]) byDay[d.dayIdx][id] = hits[id];
     });
+  });
+
+  /* Direct LGU announcements are authoritative and are merged in first. */
+  let lgu = [];
+  try{ lgu = await lguDocs(); }catch(e){}
+  lgu.forEach(a=>{
+    byDay[a.dayIdx] = byDay[a.dayIdx] || {};
+    byDay[a.dayIdx][a.cityId] = {text:a.detail, link:a.url};
+    state.sources.push({name:a.name, url:a.url, dayIdx:a.dayIdx});
   });
 
   Object.keys(byDay).forEach(idx=>{
@@ -583,6 +629,7 @@ async function loadAnnouncements(){
     });
   });
   state.anns.sort((a,b)=> a.dayIdx - b.dayIdx || a.city.localeCompare(b.city));
+  if (noRoundup && !state.anns.length) throw new Error("no dated source in range");
 }
 
 const isOff = (cityId, dayIdx) => !!(state.conf[dayIdx] && state.conf[dayIdx][cityId]);
