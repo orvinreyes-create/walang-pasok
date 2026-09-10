@@ -395,9 +395,11 @@ const TEXT_PROXIES = [
 ];
 
 const FETCH_TIMEOUT = 15000;
+const EXPECT_ROUNDUP = /walang\s*pasok|class suspension|suspension of classes|classes are suspended|no face-to-face/i;
+const EXPECT_INDEX = /walang\s*pasok|class suspension|memorandum circular|suspended/i;
 const PROXY_NAMES = ["r.jina.ai", "allorigins", "corsproxy"];
 
-async function fetchOnce(u){
+async function fetchOnce(u, expect){
   const ac = new AbortController();
   const timer = setTimeout(()=>ac.abort(), FETCH_TIMEOUT);
   try{
@@ -406,6 +408,11 @@ async function fetchOnce(u){
     const t = await r.text();
     if (!t) return {text:null, why:"empty"};
     if (t.length <= 500) return {text:null, why:"short (" + t.length + "b)"};
+    /* A 200 with the wrong body is the dangerous case: proxies return
+       placeholder, consent or block pages that are large enough to look fine.
+       Three unrelated sites all coming back at exactly 18kb was the tell. */
+    if (expect && !expect.test(t))
+      return {text:null, why:"wrong content (" + Math.round(t.length/1024) + "kb, no marker)"};
     return {text:t, why:"ok " + Math.round(t.length/1024) + "kb"};
   }catch(e){
     return {text:null, why: (e && e.name === "AbortError") ? "timeout" : "blocked/CORS"};
@@ -414,8 +421,6 @@ async function fetchOnce(u){
   }
 }
 
-/* Every attempt is recorded so failures can be read off the screen instead of
-   guessed at. Shown under Settings > Source status. */
 async function fetchText(url, opts){
   /* ALWAYS bust the proxy cache. These roundups are living documents — GMA
      publishes at 9pm and keeps adding cities all night — so the proxy's cached
@@ -428,7 +433,7 @@ async function fetchText(url, opts){
   const proxies = (opts && opts.single) ? TEXT_PROXIES.slice(0,1) : TEXT_PROXIES;
   const tries = [];
   for (let i = 0; i < proxies.length; i++){
-    const r = await fetchOnce(proxies[i](target));
+    const r = await fetchOnce(proxies[i](target), opts && opts.expect);
     tries.push(PROXY_NAMES[i] + ": " + r.why);
     if (r.text){
       state.diag.push({url, ok:true, detail:tries.join(" | ")});
@@ -441,7 +446,7 @@ async function fetchText(url, opts){
   if (opts && opts.priority && !state.retried){
     state.retried = true;                 // one retry per refresh, not per URL
     await new Promise(r=>setTimeout(r, 900));
-    const r2 = await fetchOnce(TEXT_PROXIES[0](target));
+    const r2 = await fetchOnce(TEXT_PROXIES[0](target), opts && opts.expect);
     tries.push("retry " + PROXY_NAMES[0] + ": " + r2.why);
     if (r2.text){
       state.diag.push({url, ok:true, detail:tries.join(" | ")});
@@ -683,7 +688,7 @@ async function roundupDocs(){
     return "https://www.rappler.com/philippines/class-suspensions-walang-pasok-"
          + mon + "-" + dt.getDate() + "-" + dt.getFullYear() + "/";
   });
-  const rapplerTexts = await pool(rapplerUrls, 2, (u,i)=>fetchText(u, {priority: i===0}));
+  const rapplerTexts = await pool(rapplerUrls, 2, (u,i)=>fetchText(u, {priority: i===0, expect: EXPECT_ROUNDUP}));
   /* today first so the early-exit check below sees it */
   rapplerTexts.forEach((t,i)=> accept(t, rapplerUrls[i], "Rappler"));
 
@@ -749,7 +754,7 @@ async function roundupDocs(){
       state.diag.push({url:s.name + " index", ok:true, detail:"skipped — today already covered"});
       continue;
     }
-    const t = await fetchText(s.url);
+    const t = await fetchText(s.url, {expect: EXPECT_INDEX});
     if (!t) continue;
     const links = [...t.matchAll(/\[([^\]]{10,200})\]\((https?:\/\/[^)\s]+)\)/g)];
     const hits = links.filter(m => ARTICLE_OK(m[2]) && (s.pick
@@ -770,7 +775,7 @@ async function roundupDocs(){
                              + " article(s) naming today/tomorrow"
                              + (hits.length ? " (headline)" : slugHits.length ? " (URL date)" : "")});
     for (const m of uniq){
-      const at = await fetchText(m[2]);
+      const at = await fetchText(m[2], {expect: EXPECT_ROUNDUP});
       if (accept(at, m[2], s.name) && s.national){
         docs[docs.length-1].national = true;
       }
@@ -1299,7 +1304,7 @@ function diagText(){
       ? "STILL REFRESHING (" + state.phase + " " + state.done + "/" + state.total
         + ") — some sources not tried yet"
       : "complete, " + (state.checked ? state.checked.toISOString() : "never run"));
-  return "Walang Pasok Watch — source status\n"
+  return "Walang Pasok Watch — source status (build 2026-09-11a)\n"
     + when + "\n"
     + ok + " of " + state.diag.length + " reachable\n\n"
     + state.diag.map(d=> (d.ok ? "OK   " : "FAIL ") + d.url + "\n     " + d.detail).join("\n")
