@@ -667,12 +667,12 @@ async function lguDocs(){
    proxy at all. That matters now that all three proxies are degraded. Feeds
    also sidestep subscription walls, since the wall is on the article page. */
 const FEEDS = [
-  {name:"Rappler",        url:"https://www.rappler.com/feed/"},
-  {name:"Philstar",       url:"https://www.philstar.com/rss/headlines"},
-  {name:"Philstar Nation",url:"https://www.philstar.com/rss/nation"},
-  {name:"GMA News",       url:"https://data.gmanetwork.com/gno/rss/news/feed.xml"},
-  {name:"Inquirer",       url:"https://newsinfo.inquirer.net/feed"},
-  {name:"Summit Express", url:"https://www.thesummitexpress.com/feeds/posts/default?alt=rss"}
+  /* Only feeds proven to answer a DIRECT browser fetch — no proxy involved.
+     Philstar's RSS and Summit Express both failed through every proxy and are
+     dropped; the proxy layer is too degraded to carry them. */
+  {name:"Rappler",  url:"https://www.rappler.com/philippines/feed/"},
+  {name:"GMA News", url:"https://data.gmanetwork.com/gno/rss/news/feed.xml"},
+  {name:"Inquirer", url:"https://newsinfo.inquirer.net/feed"}
 ];
 
 /* Direct first: no proxy, no rate limit, and far faster when it works. */
@@ -720,9 +720,24 @@ async function roundupDocs(){
   /* A document is only usable if the date printed in the article itself falls
      inside our five school days. Yesterday's roundup is discarded, never
      assumed to be today's. */
+  function dayFromUrl(u){
+    const s = (u||"").toLowerCase();
+    for (let i = 0; i < state.days.length; i++){
+      const dt = new Date(state.days[i].key + "T00:00:00");
+      const mon = dt.toLocaleDateString("en-US",{month:"long"}).toLowerCase();
+      const mm = String(dt.getMonth()+1).padStart(2,"0");
+      const dd = String(dt.getDate()).padStart(2,"0");
+      if (s.indexOf(mon + "-" + dt.getDate() + "-" + dt.getFullYear()) >= 0) return i;
+      if (s.indexOf(mon + "-" + dt.getDate() + "-") >= 0) return i;
+      if (s.indexOf(dt.getFullYear() + "/" + mm + "/" + dd) >= 0) return i;
+    }
+    return -1;
+  }
+
   function accept(text, url, name){
     if (!text) return false;
-    const idx = detectDay(text);
+    let idx = detectDay(text);
+    if (idx < 0) idx = dayFromUrl(url);   // "…-september-11-2026/" is a date too
     if (idx < 0){
       stale.push({name, url, date: articleDate(text) || "undated"});
       return false;
@@ -752,8 +767,10 @@ async function roundupDocs(){
     const xml = feedTexts[fi];
     if (!xml) continue;
     const items = feedItems(xml);
-    const hits = items.filter(it => WP_RE.test(it.title)
-                             && feedTokens.some(t => it.title.indexOf(t) >= 0));
+    /* Title only needs to look like a suspension roundup. Requiring the date in
+       the title matched nothing: feed titles vary and some carry no date at
+       all. The day is settled afterwards from the body, title or URL. */
+    const hits = items.filter(it => WP_RE.test(it.title));
     state.diag.push({url: FEEDS[fi].name + " feed", ok: hits.length > 0,
                      detail: items.length + " items, " + hits.length + " naming today/tomorrow"});
     for (const it of hits.slice(0,2)){
@@ -782,29 +799,24 @@ async function roundupDocs(){
      archive is JS-rendered ("LOADING CONTENT"), Inquirer's returns a 3kb
      shell, PCO and PNA likewise. These outlets publish at predictable paths,
      so discovery is skipped entirely. */
+  /* Fallback only, and only if the feeds came up empty. Rappler's article pages
+     serve an 18kb subscription wall to every proxy, and Summit Express times
+     out, so both are gone. Out of Town Blog is the one dated URL that has
+     actually returned content. */
   function dayUrls(i){
     const d = state.days[i];
     if (!d) return [];
     const dt = new Date(d.key + "T00:00:00");
     const mon = dt.toLocaleDateString("en-US",{month:"long"}).toLowerCase();
     const wd  = dt.toLocaleDateString("en-US",{weekday:"long"}).toLowerCase();
-    const day = dt.getDate(), yr = dt.getFullYear();
-    const mm  = String(dt.getMonth()+1).padStart(2,"0");
-    return [
-      "https://www.rappler.com/philippines/class-suspensions-walang-pasok-"
-        + mon + "-" + day + "-" + yr + "/",
-      "https://outoftownblog.com/walangpasok-class-suspensions-for-"
-        + mon + "-" + day + "-" + yr + "-" + wd + "/",
-      "https://www.thesummitexpress.com/" + yr + "/" + mm
-        + "/walang-pasok-class-suspensions-" + wd + "-" + mon + "-" + day + "-" + yr + ".html"
-    ];
+    return ["https://outoftownblog.com/walangpasok-class-suspensions-for-"
+            + mon + "-" + dt.getDate() + "-" + dt.getFullYear() + "-" + wd + "/"];
   }
   const rapplerUrls = [].concat(dayUrls(0), dayUrls(1));
   const rapplerTexts = await pool(rapplerUrls, 3, (u,i)=>fetchText(u, {priority: i===0, expect: EXPECT_ROUNDUP}));
   /* today first so the early-exit check below sees it */
   rapplerTexts.forEach((t,i)=> accept(t, rapplerUrls[i],
-    rapplerUrls[i].indexOf("rappler") >= 0 ? "Rappler"
-    : rapplerUrls[i].indexOf("outoftown") >= 0 ? "Out of Town Blog" : "Summit Express"));
+    "Out of Town Blog"));
 
   /* Tiered, with early exit. Rappler alone answered today in 2 fetches; the
      other outlets exist for when it hasn't published or is missing NCR. Fetching
@@ -845,10 +857,7 @@ async function roundupDocs(){
     return docs.some(d => d.dayIdx === 0 && Object.keys(matchCities(d.text)).length > 0);
   }
 
-  const INDEXES = [
-    /* Only Philstar still returns real markup; the rest proxy as JS shells. */
-    {name:"Philstar", url:"https://www.philstar.com/tags/walang-pasok"}
-  ];
+  const INDEXES = [];   // every index page proxies as a JS shell — see notes above
 
   /* Article links only: an image URL matched the link pattern last run and
      burned three proxy attempts on a thumbnail. */
@@ -1035,7 +1044,7 @@ async function loadAnnouncements(){
 
   /* Phase 1: newsroom roundups. Committed and rendered immediately so a slow
      city-site sweep never delays or hides what we already know. */
-  state.phase = "news roundups"; state.total = 4; state.done = 0;
+  state.phase = "news roundups"; state.total = 5; state.done = 0;
   const docs = await roundupDocs();
   docs.forEach(d=>{
     let hits = matchCities(d.text);             // d.dayIdx is already validated
@@ -1410,7 +1419,7 @@ function diagText(){
       ? "STILL REFRESHING (" + state.phase + " " + state.done + "/" + state.total
         + ") — some sources not tried yet"
       : "complete, " + (state.checked ? state.checked.toISOString() : "never run"));
-  return "Walang Pasok Watch — source status (build 2026-09-11c)\n"
+  return "Walang Pasok Watch — source status (build 2026-09-11d)\n"
     + when + "\n"
     + ok + " of " + state.diag.length + " reachable\n\n"
     + state.diag.map(d=> (d.ok ? "OK   " : "FAIL ") + d.url + "\n     " + d.detail).join("\n")
