@@ -631,7 +631,7 @@ function scanLguPage(text){
 
   // 2. Headline text: a walang-pasok line carrying an in-window date.
   text.split(/\r?\n/).forEach(raw=>{
-    const line = raw.replace(/\s+/g," ").trim();
+    let line = raw.replace(/\s+/g," ").trim();
     if (!line || line.length > 300) return;
     if (!WP_RE.test(line)) return;
     const d = line.match(DATE_RE);
@@ -717,6 +717,12 @@ async function roundupDocs(){
   }
 
   const INDEXES = [
+    /* Authoritative and lightweight: a Palace circular covering the NCR is the
+       single strongest signal there is, and it is what newsrooms are reporting. */
+    {name:"Malacanang (PCO)", url:"https://pco.gov.ph/news_releases/", national:true,
+     pick:(title)=>/memorandum circular no\.?\s*\d+/i.test(title)},
+    {name:"PNA", url:"https://www.pna.gov.ph/categories/national", national:true,
+     pick:(title)=>/(class|work).{0,40}suspend|suspend.{0,40}(class|work)/i.test(title)},
     {name:"GMA News", url:"https://www.gmanetwork.com/news/archives/serbisyopubliko-walangpasok/"},
     {name:"Philstar", url:"https://www.philstar.com/tags/walang-pasok"}
     /* Inquirer's tag page proxies as a 3kb JS shell with zero links — dropped. */
@@ -735,8 +741,9 @@ async function roundupDocs(){
     const t = await fetchText(s.url);
     if (!t) continue;
     const links = [...t.matchAll(/\[([^\]]{10,200})\]\((https?:\/\/[^)\s]+)\)/g)];
-    const hits = links.filter(m => ARTICLE_OK(m[2]) && WP_RE.test(m[1])
-                             && wanted.some(w => m[1].indexOf(w) >= 0));
+    const hits = links.filter(m => ARTICLE_OK(m[2]) && (s.pick
+                             ? s.pick(m[1], m[2])
+                             : (WP_RE.test(m[1]) && wanted.some(w => m[1].indexOf(w) >= 0))));
     /* Some indexes carry the date in the slug but not the anchor text. */
     const slugHits = links.filter(m => ARTICLE_OK(m[2])
                              && /walang-?pasok|class-suspensions/i.test(m[2])
@@ -751,7 +758,9 @@ async function roundupDocs(){
                              + (hits.length ? "" : slugHits.length ? " (matched by slug)" : "")});
     for (const m of uniq){
       const at = await fetchText(m[2]);
-      accept(at, m[2], s.name);
+      if (accept(at, m[2], s.name) && s.national){
+        docs[docs.length-1].national = true;
+      }
       if (haveToday()) break;
     }
   }
@@ -805,22 +814,47 @@ function cityRegexes(c){
    roundup silently parsed to zero cities. */
 const SUSPEND_RE = /suspend|walang pasok|no (face-to-face|in-person)? ?classes|no afternoon|cancel|alternative (learning|delivery|modalit)|distance learning|shift to|all levels|face-to-face classes|in-person classes|public and private/i;
 
+/* Malacanang circulars list covered areas as bullets — "NCR" sits on its own
+   line with no verb beside it — so the line-based matcher cannot see them.
+   For national sources only, scan the DOCUMENT: if it suspends classes and
+   names the NCR anywhere, every city is covered. Restricted to national
+   sources so a newsroom article merely mentioning NCR can't trigger it. */
+function nationalScan(text){
+  const t = text.slice(0, 6000);
+  /* Require the circular's actual formula — "classes at all levels ...
+     suspended" — not merely the words "class" and "suspend" in the same
+     document. A weather story saying "no class suspensions have been
+     announced" satisfied the loose test. */
+  if (!/classes?\s+(at|in)\s+all\s+levels/i.test(t)) return false;
+  if (!/suspend/i.test(t)) return false;
+  if (/no class suspensions|walang suspension|have not been suspended/i.test(t)) return false;
+  return /national capital region|metro manila|\bNCR\b/i.test(t);
+}
+
 const REGION_RE = /\b(metro manila|national capital region|NCR)\b/i;
 
 function matchCities(text){
   const lines = text.split(/\r?\n|(?=\u2022)|(?=\u00b7)/);
   const found = {};
   lines.forEach(raw=>{
-    const line = raw.replace(/\s+/g," ").trim();
-    if (!line || line.length > 400) return;
-    if (/^MANILA,\s*Philippines/i.test(line)) return;
+    let line = raw.replace(/\s+/g," ").trim();
+    if (!line || line.length > 700) return;
+    /* Do NOT discard the dateline paragraph. Rappler puts national and
+       Malacanang-wide announcements right there — "MANILA, Philippines –
+       Malacanang suspended face-to-face classes in all levels..." — so
+       dropping it loses exactly the blanket NCR case. The guard existed only
+       to stop the dateline's "Manila" being read as Manila City; stripping the
+       prefix achieves that, and the MNL matcher requires "Manila City" or
+       "City of Manila" anyway. */
+    line = line.replace(/^MANILA,\s*Philippines\s*[–—-]*\s*/i, "");
+    if (!line) return;
     if (!SUSPEND_RE.test(line)) return;
 
     /* A blanket NCR suspension names the region, not the 17 cities. Malacañang
        memoranda and MMDA bulletins read "classes in the National Capital Region
        and 21 provinces are suspended" — checked BEFORE the outside-NCR guard,
        precisely because such a line also lists provinces. */
-    if (REGION_RE.test(line) && !/^MANILA,/i.test(line)){
+    if (REGION_RE.test(line)){
       const d = cleanDetail(line);
       CITIES.forEach(c=>{ if(!found[c.id]) found[c.id] = d; });
       return;
@@ -880,7 +914,12 @@ async function loadAnnouncements(){
   state.phase = "news roundups"; state.total = 4; state.done = 0;
   const docs = await roundupDocs();
   docs.forEach(d=>{
-    const hits = matchCities(d.text);           // d.dayIdx is already validated
+    let hits = matchCities(d.text);             // d.dayIdx is already validated
+    if (d.national && nationalScan(d.text)){
+      const detail = {text:"Classes at all levels suspended across the National Capital Region "
+                           + "by Malacanang circular.", link:d.url};
+      CITIES.forEach(c=>{ if(!hits[c.id]) hits[c.id] = detail; });
+    }
     state.diag.push({url: d.name + " parse (" + (state.days[d.dayIdx] || {}).key + ")",
                      ok: Object.keys(hits).length > 0,
                      detail: Object.keys(hits).length + " NCR cities matched"
