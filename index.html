@@ -483,35 +483,27 @@ function daySlug(offset){
 const MONTHS = ["january","february","march","april","may","june","july",
                 "august","september","october","november","december"];
 function articleDate(text){
-  const head = text.slice(0, 1200).toLowerCase();
+  const head = text.slice(0, 6000).toLowerCase();
   const m = head.match(/(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2}),?\s+(\d{4})/);
   return m ? (m[1].charAt(0).toUpperCase()+m[1].slice(1)+" "+(+m[2])+", "+m[3]) : null;
 }
 
 function detectDay(text){
-  const head = text.slice(0, 1200).toLowerCase();
-  const m = head.match(/(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2}),?\s+(\d{4})/);
-  if (!m) return -1;
-  const key = m[3] + "-" + String(MONTHS.indexOf(m[1])+1).padStart(2,"0")
-            + "-" + String(+m[2]).padStart(2,"0");
-  return state.days.findIndex(d => d.key === key);
+  const head = text.slice(0, 6000).toLowerCase();
+  /* Take ALL dates in the header region and prefer one inside our window. The
+     old code took only the FIRST date found, so a "published September 10"
+     stamp above the headline could reject an article about September 11. */
+  const re = /(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2}),?\s+(\d{4})/g;
+  let m, first = -1;
+  while ((m = re.exec(head)) !== null){
+    const key = m[3] + "-" + String(MONTHS.indexOf(m[1])+1).padStart(2,"0")
+              + "-" + String(+m[2]).padStart(2,"0");
+    const i = state.days.findIndex(d => d.key === key);
+    if (i >= 0) return i;
+    if (first < 0) first = -1;
+  }
+  return -1;
 }
-
-/* Rappler publishes at a fully predictable daily URL; GMA keeps a tracking hub
-   from which recent story links can be pulled. We look at today AND the days
-   ahead, because an evening announcement for tomorrow is the whole point. */
-/* ---- official LGU sources, read directly ----
-   Newsroom roundups are hand-curated and lag or omit LGU posts entirely, so
-   each city's own site is read as well. Detection is date-driven: a page only
-   confirms a suspension if it carries a "walang pasok" style announcement AND
-   a date inside our five-day window. Stale headlines still sitting on a
-   homepage are therefore harmless.
-
-   Facebook itself cannot be read from a browser (no CORS, login-walled). Cities
-   that post only to Facebook will stay dependent on the roundups; those sources
-   simply fail quietly and are reported under coverage. */
-const LGU_SOURCES = [];   // roundups already list all 17 NCR cities
-const NO_SITE = [];
 
 /* ---- optional: official Facebook page search ----
    Off unless both an API key and a search engine ID are saved in Settings.
@@ -683,10 +675,13 @@ async function roundupDocs(){
   }
 
   /* All three Rappler days at once — sequentially this was three timeouts deep. */
-  const rapplerUrls = [0,1].map(off=>{
-    const {mon,day,year} = daySlug(off);
+  /* Use the school-day list, not calendar offsets: offset 1 on a Friday is
+     Saturday, and there is no roundup for a Saturday. */
+  const rapplerUrls = [0,1].filter(i=>state.days[i]).map(i=>{
+    const dt = new Date(state.days[i].key + "T00:00:00");
+    const mon = dt.toLocaleDateString("en-US",{month:"long"}).toLowerCase();
     return "https://www.rappler.com/philippines/class-suspensions-walang-pasok-"
-         + mon + "-" + day + "-" + year + "/";
+         + mon + "-" + dt.getDate() + "-" + dt.getFullYear() + "/";
   });
   const rapplerTexts = await pool(rapplerUrls, 2, (u,i)=>fetchText(u, {priority: i===0}));
   /* today first so the early-exit check below sees it */
@@ -711,6 +706,21 @@ async function roundupDocs(){
   }
   const wanted = [].concat(dateTokens(0), dateTokens(1));
 
+  /* The same dates in the forms that appear inside URLs. */
+  function urlTokens(i){
+    const d = state.days[i];
+    if (!d) return [];
+    const dt = new Date(d.key + "T00:00:00");
+    const mon = dt.toLocaleDateString("en-US",{month:"long"}).toLowerCase();
+    const ab = (ABBR[dt.toLocaleDateString("en-US",{month:"long"})] || mon).toLowerCase();
+    const day = dt.getDate();
+    const mm = String(dt.getMonth()+1).padStart(2,"0");
+    const dd = String(day).padStart(2,"0");
+    return [mon + "-" + day + "-" + dt.getFullYear(), mon + "-" + day,
+            ab + "-" + day, dt.getFullYear() + "/" + mm + "/" + dd, d.key];
+  }
+  const urlDateTokens = [].concat(urlTokens(0), urlTokens(1));
+
   /* Have we already got today covered? If so, stop. */
   function haveToday(){
     return docs.some(d => d.dayIdx === 0 && Object.keys(matchCities(d.text)).length > 0);
@@ -724,7 +734,8 @@ async function roundupDocs(){
     {name:"PNA", url:"https://www.pna.gov.ph/categories/national", national:true,
      pick:(title)=>/(class|work).{0,40}suspend|suspend.{0,40}(class|work)/i.test(title)},
     {name:"GMA News", url:"https://www.gmanetwork.com/news/archives/serbisyopubliko-walangpasok/"},
-    {name:"Philstar", url:"https://www.philstar.com/tags/walang-pasok"}
+    {name:"Philstar", url:"https://www.philstar.com/tags/walang-pasok"},
+    {name:"Inquirer", url:"https://newsinfo.inquirer.net/category/inquirer-headlines/nation"}
     /* Inquirer's tag page proxies as a 3kb JS shell with zero links — dropped. */
   ];
 
@@ -744,18 +755,20 @@ async function roundupDocs(){
     const hits = links.filter(m => ARTICLE_OK(m[2]) && (s.pick
                              ? s.pick(m[1], m[2])
                              : (WP_RE.test(m[1]) && wanted.some(w => m[1].indexOf(w) >= 0))));
-    /* Some indexes carry the date in the slug but not the anchor text. */
+    /* Anchor text is unreliable — proxied indexes truncate or drop it, which is
+       why 70 GMA links yielded zero headline matches. URLs are stable, so match
+       the date in the slug: GMA writes ".../september-11-2026/", Philstar
+       ".../2026/09/11/", Inquirer "...-sept-11". */
     const slugHits = links.filter(m => ARTICLE_OK(m[2])
-                             && /walang-?pasok|class-suspensions/i.test(m[2])
-                             && wanted.some(w => m[2].toLowerCase()
-                                  .indexOf(w.toLowerCase().replace(/\.\s*/,"-").replace(/\s+/g,"-")) >= 0));
+                             && /walang-?pasok|class-suspension/i.test(m[2])
+                             && urlDateTokens.some(w => m[2].toLowerCase().indexOf(w) >= 0));
     const all = hits.concat(slugHits);
     const seenU = new Set();
     const uniq = all.filter(m => !seenU.has(m[2]) && seenU.add(m[2])).slice(0,2);
     state.diag.push({url:s.name + " index", ok:uniq.length > 0,
                      detail: links.length + " links, " + uniq.length
                              + " article(s) naming today/tomorrow"
-                             + (hits.length ? "" : slugHits.length ? " (matched by slug)" : "")});
+                             + (hits.length ? " (headline)" : slugHits.length ? " (URL date)" : "")});
     for (const m of uniq){
       const at = await fetchText(m[2]);
       if (accept(at, m[2], s.name) && s.national){
@@ -1290,6 +1303,10 @@ function diagText(){
     + when + "\n"
     + ok + " of " + state.diag.length + " reachable\n\n"
     + state.diag.map(d=> (d.ok ? "OK   " : "FAIL ") + d.url + "\n     " + d.detail).join("\n")
+    + (state.stale && state.stale.length
+        ? "\n\nRejected (date outside window):\n"
+          + state.stale.map(s=>"  " + s.name + " — " + s.date + " — " + s.url).join("\n")
+        : "\n\nRejected: none")
     + "\n\nDays: " + state.days.map(d=>d.key).join(", ")
     + "\nConfirmed: " + (state.anns.length
         ? state.anns.map(a=>a.city + "@d" + a.dayIdx).join(", ") : "none");
