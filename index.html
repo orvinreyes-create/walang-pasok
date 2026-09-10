@@ -661,6 +661,59 @@ async function lguDocs(){
   return out;
 }
 
+/* ---- RSS tier ----
+   Feeds are static XML: small, cacheable, and frequently served with
+   Access-Control-Allow-Origin, which means a DIRECT fetch may work with no
+   proxy at all. That matters now that all three proxies are degraded. Feeds
+   also sidestep subscription walls, since the wall is on the article page. */
+const FEEDS = [
+  {name:"Rappler",        url:"https://www.rappler.com/feed/"},
+  {name:"Philstar",       url:"https://www.philstar.com/rss/headlines"},
+  {name:"Philstar Nation",url:"https://www.philstar.com/rss/nation"},
+  {name:"GMA News",       url:"https://data.gmanetwork.com/gno/rss/news/feed.xml"},
+  {name:"Inquirer",       url:"https://newsinfo.inquirer.net/feed"},
+  {name:"Summit Express", url:"https://www.thesummitexpress.com/feeds/posts/default?alt=rss"}
+];
+
+/* Direct first: no proxy, no rate limit, and far faster when it works. */
+async function fetchXml(url){
+  const direct = await fetchOnce(url, /<item|<entry/i);
+  if (direct.text){
+    state.diag.push({url, ok:true, detail:"direct (no proxy): " + direct.why});
+    state.done++;
+    return direct.text;
+  }
+  const viaProxy = await fetchText(url, {expect:/<item|<entry/i});
+  if (!viaProxy) return null;
+  return viaProxy;
+}
+
+/* Feeds encode punctuation: "Caloocan City &#8211; face-to-face..." must become
+   a real dash or the parser sees a different line shape. */
+function decodeEnt(s){
+  return s.replace(/&#(\d+);/g, (m,n)=>String.fromCharCode(+n))
+          .replace(/&#x([0-9a-f]+);/gi, (m,n)=>String.fromCharCode(parseInt(n,16)))
+          .replace(/&nbsp;/gi," ").replace(/&ndash;/gi,"–").replace(/&mdash;/gi,"—")
+          .replace(/&quot;/gi,'"').replace(/&#39;|&apos;/gi,"'")
+          .replace(/&lt;/gi,"<").replace(/&gt;/gi,">").replace(/&amp;/gi,"&");
+}
+
+function feedItems(xml){
+  return xml.split(/<\/item>|<\/entry>/i).map(chunk=>{
+    const grab = (tag)=>{
+      const m = chunk.match(new RegExp("<"+tag+"[^>]*>([\\s\\S]*?)<\\/"+tag+">","i"));
+      if (!m) return "";
+      return m[1].replace(/<!\[CDATA\[|\]\]>/g,"").trim();
+    };
+    const linkTag = grab("link") || (chunk.match(/<link[^>]*href="([^"]+)"/i) || [])[1] || "";
+    return {
+      title: grab("title").replace(/<[^>]+>/g," ").replace(/\s+/g," ").trim(),
+      link: linkTag.replace(/<[^>]+>/g,"").trim(),
+      body: (grab("content:encoded") || grab("description") || grab("summary"))
+    };
+  }).filter(it=>it.title);
+}
+
 async function roundupDocs(){
   const docs = [], tried = [], stale = [];
 
@@ -682,6 +735,49 @@ async function roundupDocs(){
   /* All three Rappler days at once — sequentially this was three timeouts deep. */
   /* Use the school-day list, not calendar offsets: offset 1 on a Friday is
      Saturday, and there is no roundup for a Saturday. */
+  /* ---- tier 0: feeds ---- */
+  const feedTokens = [].concat(
+    (function(){ const o=[]; [0,1].forEach(function(i){
+      const d = state.days[i]; if(!d) return;
+      const dt = new Date(d.key+"T00:00:00");
+      const full = dt.toLocaleDateString("en-US",{month:"long"});
+      const ab = ({January:"Jan",February:"Feb",March:"March",April:"April",May:"May",
+                   June:"June",July:"July",August:"Aug",September:"Sept",
+                   October:"Oct",November:"Nov",December:"Dec"})[full] || full.slice(0,3);
+      o.push(full+" "+dt.getDate(), ab+". "+dt.getDate(), ab+" "+dt.getDate());
+    }); return o; })());
+
+  const feedTexts = await pool(FEEDS, 3, f=>fetchXml(f.url));
+  for (let fi = 0; fi < FEEDS.length; fi++){
+    const xml = feedTexts[fi];
+    if (!xml) continue;
+    const items = feedItems(xml);
+    const hits = items.filter(it => WP_RE.test(it.title)
+                             && feedTokens.some(t => it.title.indexOf(t) >= 0));
+    state.diag.push({url: FEEDS[fi].name + " feed", ok: hits.length > 0,
+                     detail: items.length + " items, " + hits.length + " naming today/tomorrow"});
+    for (const it of hits.slice(0,2)){
+      /* Many feeds carry the whole list in the item body — no article fetch needed. */
+      const bodyText = it.body ? decodeEnt(it.body)
+            .replace(/<\/(li|p|div|h\d|br)>/gi,"\n").replace(/<[^>]+>/g," ") : "";
+      const inline = bodyText && Object.keys(matchCities(bodyText)).length > 0;
+      if (inline){
+        accept(it.title + "\n" + bodyText,
+               it.link || FEEDS[fi].url, FEEDS[fi].name + " (feed)");
+      } else if (it.link){
+        const at = await fetchText(it.link, {expect: EXPECT_ROUNDUP});
+        accept(at, it.link, FEEDS[fi].name);
+      }
+      if (haveToday()) break;
+    }
+    if (haveToday()) break;
+  }
+  if (haveToday()){
+    state.sources = tried;
+    state.stale = stale;
+    return docs;
+  }
+
   /* Direct, date-derived article URLs. Index pages proved useless: GMA's
      archive is JS-rendered ("LOADING CONTENT"), Inquirer's returns a 3kb
      shell, PCO and PNA likewise. These outlets publish at predictable paths,
@@ -1314,7 +1410,7 @@ function diagText(){
       ? "STILL REFRESHING (" + state.phase + " " + state.done + "/" + state.total
         + ") — some sources not tried yet"
       : "complete, " + (state.checked ? state.checked.toISOString() : "never run"));
-  return "Walang Pasok Watch — source status (build 2026-09-11b)\n"
+  return "Walang Pasok Watch — source status (build 2026-09-11c)\n"
     + when + "\n"
     + ok + " of " + state.diag.length + " reachable\n\n"
     + state.diag.map(d=> (d.ok ? "OK   " : "FAIL ") + d.url + "\n     " + d.detail).join("\n")
