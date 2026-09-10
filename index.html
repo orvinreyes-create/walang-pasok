@@ -682,15 +682,33 @@ async function roundupDocs(){
   /* All three Rappler days at once — sequentially this was three timeouts deep. */
   /* Use the school-day list, not calendar offsets: offset 1 on a Friday is
      Saturday, and there is no roundup for a Saturday. */
-  const rapplerUrls = [0,1].filter(i=>state.days[i]).map(i=>{
-    const dt = new Date(state.days[i].key + "T00:00:00");
+  /* Direct, date-derived article URLs. Index pages proved useless: GMA's
+     archive is JS-rendered ("LOADING CONTENT"), Inquirer's returns a 3kb
+     shell, PCO and PNA likewise. These outlets publish at predictable paths,
+     so discovery is skipped entirely. */
+  function dayUrls(i){
+    const d = state.days[i];
+    if (!d) return [];
+    const dt = new Date(d.key + "T00:00:00");
     const mon = dt.toLocaleDateString("en-US",{month:"long"}).toLowerCase();
-    return "https://www.rappler.com/philippines/class-suspensions-walang-pasok-"
-         + mon + "-" + dt.getDate() + "-" + dt.getFullYear() + "/";
-  });
-  const rapplerTexts = await pool(rapplerUrls, 2, (u,i)=>fetchText(u, {priority: i===0, expect: EXPECT_ROUNDUP}));
+    const wd  = dt.toLocaleDateString("en-US",{weekday:"long"}).toLowerCase();
+    const day = dt.getDate(), yr = dt.getFullYear();
+    const mm  = String(dt.getMonth()+1).padStart(2,"0");
+    return [
+      "https://www.rappler.com/philippines/class-suspensions-walang-pasok-"
+        + mon + "-" + day + "-" + yr + "/",
+      "https://outoftownblog.com/walangpasok-class-suspensions-for-"
+        + mon + "-" + day + "-" + yr + "-" + wd + "/",
+      "https://www.thesummitexpress.com/" + yr + "/" + mm
+        + "/walang-pasok-class-suspensions-" + wd + "-" + mon + "-" + day + "-" + yr + ".html"
+    ];
+  }
+  const rapplerUrls = [].concat(dayUrls(0), dayUrls(1));
+  const rapplerTexts = await pool(rapplerUrls, 3, (u,i)=>fetchText(u, {priority: i===0, expect: EXPECT_ROUNDUP}));
   /* today first so the early-exit check below sees it */
-  rapplerTexts.forEach((t,i)=> accept(t, rapplerUrls[i], "Rappler"));
+  rapplerTexts.forEach((t,i)=> accept(t, rapplerUrls[i],
+    rapplerUrls[i].indexOf("rappler") >= 0 ? "Rappler"
+    : rapplerUrls[i].indexOf("outoftown") >= 0 ? "Out of Town Blog" : "Summit Express"));
 
   /* Tiered, with early exit. Rappler alone answered today in 2 fetches; the
      other outlets exist for when it hasn't published or is missing NCR. Fetching
@@ -732,16 +750,8 @@ async function roundupDocs(){
   }
 
   const INDEXES = [
-    /* Authoritative and lightweight: a Palace circular covering the NCR is the
-       single strongest signal there is, and it is what newsrooms are reporting. */
-    {name:"Malacanang (PCO)", url:"https://pco.gov.ph/news_releases/", national:true,
-     pick:(title)=>/memorandum circular no\.?\s*\d+/i.test(title)},
-    {name:"PNA", url:"https://www.pna.gov.ph/categories/national", national:true,
-     pick:(title)=>/(class|work).{0,40}suspend|suspend.{0,40}(class|work)/i.test(title)},
-    {name:"GMA News", url:"https://www.gmanetwork.com/news/archives/serbisyopubliko-walangpasok/"},
-    {name:"Philstar", url:"https://www.philstar.com/tags/walang-pasok"},
-    {name:"Inquirer", url:"https://newsinfo.inquirer.net/category/inquirer-headlines/nation"}
-    /* Inquirer's tag page proxies as a 3kb JS shell with zero links — dropped. */
+    /* Only Philstar still returns real markup; the rest proxy as JS shells. */
+    {name:"Philstar", url:"https://www.philstar.com/tags/walang-pasok"}
   ];
 
   /* Article links only: an image URL matched the link pattern last run and
@@ -1304,7 +1314,7 @@ function diagText(){
       ? "STILL REFRESHING (" + state.phase + " " + state.done + "/" + state.total
         + ") — some sources not tried yet"
       : "complete, " + (state.checked ? state.checked.toISOString() : "never run"));
-  return "Walang Pasok Watch — source status (build 2026-09-11a)\n"
+  return "Walang Pasok Watch — source status (build 2026-09-11b)\n"
     + when + "\n"
     + ok + " of " + state.diag.length + " reachable\n\n"
     + state.diag.map(d=> (d.ok ? "OK   " : "FAIL ") + d.url + "\n     " + d.detail).join("\n")
